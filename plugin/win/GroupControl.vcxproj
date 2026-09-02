@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="Current" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{8A3ABF57-CE0A-4DB6-9EFA-7A6C893B4A0B}</ProjectGuid>
+    <RootNamespace>GroupControl</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0.26100.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <UseOfMfc>false</UseOfMfc>
+    <PlatformToolset>v143</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <UseOfMfc>false</UseOfMfc>
+    <PlatformToolset>v143</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+
+  <PropertyGroup Label="UserMacros">
+    <PluginBuildDir Condition="'$(PluginBuildDir)'==''">$(MSBuildThisFileDirectory)..\..\build\win\$(Configuration)\</PluginBuildDir>
+    <GroupControlClExe Condition="'$(VCToolsInstallDir)'!=''">$(VCToolsInstallDir)bin\Hostx64\$(Platform)\cl.exe</GroupControlClExe>
+    <GroupControlClExe Condition="'$(GroupControlClExe)'==''">cl.exe</GroupControlClExe>
+  </PropertyGroup>
+  <PropertyGroup>
+    <OutDir>$(PluginBuildDir)</OutDir>
+    <IntDir>$(MSBuildThisFileDirectory)..\..\build\win\obj\$(Configuration)\</IntDir>
+    <TargetName>GroupControl</TargetName>
+    <TargetExt>.aex</TargetExt>
+  </PropertyGroup>
+
+  <Target Name="ValidateSdkRoot" BeforeTargets="PrepareForBuild">
+    <Error Condition="'$(SDK_ROOT)'==''" Text="SDK_ROOT must point to the After Effects SDK root." />
+    <Error Condition="!Exists('$(SDK_ROOT)\Examples\Headers\AE_Effect.h')" Text="SDK_ROOT is missing Examples\Headers\AE_Effect.h: $(SDK_ROOT)" />
+    <Error Condition="!Exists('$(SDK_ROOT)\Examples\Resources\PiPLtool.exe')" Text="SDK_ROOT is missing Examples\Resources\PiPLtool.exe: $(SDK_ROOT)" />
+  </Target>
+
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <ClCompile>
+      <Optimization>Disabled</Optimization>
+      <AdditionalIncludeDirectories>$(SDK_ROOT)\Examples\Headers;$(SDK_ROOT)\Examples\Headers\SP;$(SDK_ROOT)\Examples\Util;$(SDK_ROOT)\Examples\Resources;$(MSBuildThisFileDirectory)..\GroupControl;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>MSWindows;WIN32;_WINDOWS;_DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>
+      <WarningLevel>Level3</WarningLevel>
+      <TreatWarningAsError>false</TreatWarningAsError>
+      <ExceptionHandling>Sync</ExceptionHandling>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <Link>
+      <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <IgnoreImportLibrary>true</IgnoreImportLibrary>
+      <TargetMachine>MachineX64</TargetMachine>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <Optimization>MaxSpeed</Optimization>
+      <AdditionalIncludeDirectories>$(SDK_ROOT)\Examples\Headers;$(SDK_ROOT)\Examples\Headers\SP;$(SDK_ROOT)\Examples\Util;$(SDK_ROOT)\Examples\Resources;$(MSBuildThisFileDirectory)..\GroupControl;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>MSWindows;WIN32;_WINDOWS;NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
+      <WarningLevel>Level3</WarningLevel>
+      <TreatWarningAsError>false</TreatWarningAsError>
+      <ExceptionHandling>Sync</ExceptionHandling>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <Link>
+      <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
+      <GenerateDebugInformation>false</GenerateDebugInformation>
+      <IgnoreImportLibrary>true</IgnoreImportLibrary>
+      <TargetMachine>MachineX64</TargetMachine>
+    </Link>
+  </ItemDefinitionGroup>
+
+  <ItemGroup>
+    <ClCompile Include="..\GroupControl\GroupControl.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="..\GroupControl\GroupControl.h" />
+    <ClInclude Include="..\GroupControl\GroupControlParams.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <CustomBuild Include="..\GroupControl\GroupControlPiPL.r">
+      <FileType>Document</FileType>
+      <Command>"$(GroupControlClExe)" /nologo /I "$(SDK_ROOT)\Examples\Headers" /EP "%(FullPath)" &gt; "$(IntDir)GroupControlPiPL.rr"
+"$(SDK_ROOT)\Examples\Resources\PiPLtool.exe" "$(IntDir)GroupControlPiPL.rr" "$(IntDir)GroupControlPiPL.rrc"
+"$(GroupControlClExe)" /nologo /D MSWindows /EP "$(IntDir)GroupControlPiPL.rrc" &gt; "$(IntDir)GroupControlPiPL.rc"</Command>
+      <Outputs>$(IntDir)GroupControlPiPL.rc</Outputs>
+    </CustomBuild>
+    <ResourceCompile Include="$(IntDir)GroupControlPiPL.rc" />
+  </ItemGroup>
+
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+</Project>

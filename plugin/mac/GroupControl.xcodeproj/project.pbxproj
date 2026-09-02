@@ -1,0 +1,201 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 54;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		A10000010000000000000001 /* GroupControl.cpp in Sources */ = {isa = PBXBuildFile; fileRef = A10000110000000000000011 /* GroupControl.cpp */; };
+		A10000020000000000000002 /* GroupControlPiPL.r in Resources */ = {isa = PBXBuildFile; fileRef = A10000130000000000000013 /* GroupControlPiPL.r */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		A10000100000000000000010 /* GroupControl.plugin */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = GroupControl.plugin; sourceTree = BUILT_PRODUCTS_DIR; };
+		A10000110000000000000011 /* GroupControl.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; name = GroupControl.cpp; path = ../GroupControl/GroupControl.cpp; sourceTree = SOURCE_ROOT; };
+		A10000120000000000000012 /* GroupControl.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = GroupControl.h; path = ../GroupControl/GroupControl.h; sourceTree = SOURCE_ROOT; };
+		A10000130000000000000013 /* GroupControlPiPL.r */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.rez; name = GroupControlPiPL.r; path = ../GroupControl/GroupControlPiPL.r; sourceTree = SOURCE_ROOT; };
+		A10000140000000000000014 /* GroupControl.plugin-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = GroupControl.plugin-Info.plist; sourceTree = SOURCE_ROOT; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		A10000200000000000000020 = {
+			isa = PBXGroup;
+			children = (
+				A10000110000000000000011 /* GroupControl.cpp */,
+				A10000120000000000000012 /* GroupControl.h */,
+				A10000130000000000000013 /* GroupControlPiPL.r */,
+				A10000140000000000000014 /* GroupControl.plugin-Info.plist */,
+				A10000210000000000000021 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		A10000210000000000000021 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				A10000100000000000000010 /* GroupControl.plugin */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		A10000300000000000000030 /* GroupControl */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A10000500000000000000050 /* Build configuration list for PBXNativeTarget "GroupControl" */;
+			buildPhases = (
+				A10000410000000000000041 /* Resources */,
+				A10000420000000000000042 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = GroupControl;
+			productName = GroupControl;
+			productReference = A10000100000000000000010 /* GroupControl.plugin */;
+			productType = "com.apple.product-type.bundle";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		A10000220000000000000022 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				LastUpgradeCheck = 1620;
+			};
+			buildConfigurationList = A10000400000000000000040 /* Build configuration list for PBXProject "GroupControl" */;
+			compatibilityVersion = "Xcode 3.2";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = A10000200000000000000020;
+			productRefGroup = A10000210000000000000021 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				A10000300000000000000030 /* GroupControl */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		A10000410000000000000041 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000020000000000000002 /* GroupControlPiPL.r in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		A10000420000000000000042 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000010000000000000001 /* GroupControl.cpp in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		A10000600000000000000060 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_CXX_LANGUAGE_STANDARD = "c++17";
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					AE_OS_MAC,
+				);
+				HEADER_SEARCH_PATHS = (
+					"$(SDK_ROOT)/Examples/Headers",
+					"$(SDK_ROOT)/Examples/Headers/SP",
+					"$(SDK_ROOT)/Examples/Util",
+					"$(SDK_ROOT)/Examples/Resources",
+					"$(SRCROOT)/../GroupControl",
+				);
+				PRODUCT_NAME = GroupControl;
+				REZ_SEARCH_PATHS = (
+					"$(SDK_ROOT)/Examples/Headers",
+					"$(SDK_ROOT)/Examples/Resources",
+				);
+				SDKROOT = macosx;
+				WRAPPER_EXTENSION = plugin;
+			};
+			name = Debug;
+		};
+		A10000610000000000000061 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_CXX_LANGUAGE_STANDARD = "c++17";
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					AE_OS_MAC,
+				);
+				HEADER_SEARCH_PATHS = (
+					"$(SDK_ROOT)/Examples/Headers",
+					"$(SDK_ROOT)/Examples/Headers/SP",
+					"$(SDK_ROOT)/Examples/Util",
+					"$(SDK_ROOT)/Examples/Resources",
+					"$(SRCROOT)/../GroupControl",
+				);
+				PRODUCT_NAME = GroupControl;
+				REZ_SEARCH_PATHS = (
+					"$(SDK_ROOT)/Examples/Headers",
+					"$(SDK_ROOT)/Examples/Resources",
+				);
+				SDKROOT = macosx;
+				WRAPPER_EXTENSION = plugin;
+			};
+			name = Release;
+		};
+		A10000700000000000000070 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				INFOPLIST_FILE = "$(SRCROOT)/GroupControl.plugin-Info.plist";
+				PRODUCT_BUNDLE_IDENTIFIER = com.ngs.aftereffects.groupcontrol;
+			};
+			name = Debug;
+		};
+		A10000710000000000000071 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				INFOPLIST_FILE = "$(SRCROOT)/GroupControl.plugin-Info.plist";
+				PRODUCT_BUNDLE_IDENTIFIER = com.ngs.aftereffects.groupcontrol;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		A10000400000000000000040 /* Build configuration list for PBXProject "GroupControl" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A10000600000000000000060 /* Debug */,
+				A10000610000000000000061 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A10000500000000000000050 /* Build configuration list for PBXNativeTarget "GroupControl" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A10000700000000000000070 /* Debug */,
+				A10000710000000000000071 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = A10000220000000000000022 /* Project object */;
+}
+
