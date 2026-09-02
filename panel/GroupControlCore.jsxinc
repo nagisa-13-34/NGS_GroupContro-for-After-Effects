@@ -1,0 +1,349 @@
+/*
+ * ExtendScript-compatible pure logic for Group Control.
+ * Keep this file to ES3 syntax so it can be included by a ScriptUI panel.
+ */
+(function () {
+    var markerHeader = "NGS_GROUP_CONTROL_V1";
+    var markerErrorCodes = {
+        syntax: "MARKER_SYNTAX",
+        id: "MARKER_ID",
+        duplicateLayerId: "MARKER_DUPLICATE_LAYER_ID",
+        selfId: "MARKER_SELF_ID"
+    };
+
+    function hasOwn(object, key) {
+        return object !== null && typeof object !== "undefined" &&
+            Object.prototype.hasOwnProperty.call(object, key);
+    }
+
+    function toInteger(value, fallback) {
+        var numeric = Number(value);
+
+        if (!isFinite(numeric)) {
+            return fallback;
+        }
+
+        if (numeric < 0) {
+            return Math.ceil(numeric);
+        }
+
+        return Math.floor(numeric);
+    }
+
+    function createMarkerError(code, message) {
+        var error = new Error(message);
+        error.code = code;
+        return error;
+    }
+
+    function throwMarkerError(code, message) {
+        throw createMarkerError(code, message);
+    }
+
+    function clampLayerCount(rawValue, compLayerCount) {
+        var maximum = toInteger(compLayerCount, 0);
+        var value = toInteger(rawValue, 0);
+
+        if (maximum < 0) {
+            maximum = 0;
+        }
+
+        if (value < 0) {
+            value = 0;
+        }
+
+        if (value > maximum) {
+            value = maximum;
+        }
+
+        return value;
+    }
+
+    function getTargetIndexRange(groupIndex, layerCount, totalLayers) {
+        var normalizedGroupIndex = toInteger(groupIndex, 0);
+        var normalizedLayerCount = toInteger(layerCount, 0);
+        var normalizedTotalLayers = toInteger(totalLayers, 0);
+        var startIndex;
+        var endIndex;
+        var count;
+
+        if (normalizedGroupIndex < 0) {
+            normalizedGroupIndex = 0;
+        }
+        if (normalizedLayerCount < 0) {
+            normalizedLayerCount = 0;
+        }
+        if (normalizedTotalLayers < 0) {
+            normalizedTotalLayers = 0;
+        }
+
+        startIndex = normalizedGroupIndex + 1;
+
+        if (normalizedLayerCount === 0 || startIndex > normalizedTotalLayers) {
+            return {
+                startIndex: startIndex,
+                endIndex: startIndex - 1,
+                count: 0
+            };
+        }
+
+        endIndex = normalizedGroupIndex + normalizedLayerCount;
+        if (endIndex > normalizedTotalLayers) {
+            endIndex = normalizedTotalLayers;
+        }
+
+        count = endIndex - startIndex + 1;
+        if (count < 0) {
+            count = 0;
+        }
+
+        return {
+            startIndex: startIndex,
+            endIndex: endIndex,
+            count: count
+        };
+    }
+
+    function getRecordLayerId(record) {
+        if (record === null || typeof record === "undefined") {
+            return 0;
+        }
+
+        return toInteger(record.layerId, 0);
+    }
+
+    function getRecordParentId(record) {
+        if (record === null || typeof record === "undefined") {
+            return 0;
+        }
+
+        return toInteger(record.parentId, 0);
+    }
+
+    function getRootLayerIds(targetRecords) {
+        var targetIds = {};
+        var roots = [];
+        var index;
+        var record;
+        var layerId;
+        var parentId;
+
+        if (targetRecords === null || typeof targetRecords === "undefined" ||
+                typeof targetRecords.length !== "number") {
+            return roots;
+        }
+
+        for (index = 0; index < targetRecords.length; index += 1) {
+            layerId = getRecordLayerId(targetRecords[index]);
+            if (layerId > 0) {
+                targetIds["id:" + layerId] = true;
+            }
+        }
+
+        for (index = 0; index < targetRecords.length; index += 1) {
+            record = targetRecords[index];
+            layerId = getRecordLayerId(record);
+            parentId = getRecordParentId(record);
+
+            if (layerId > 0 && !hasOwn(targetIds, "id:" + parentId)) {
+                roots.push(layerId);
+            }
+        }
+
+        return roots;
+    }
+
+    function wouldCreateParentCycle(layerId, proposedParentId, parentMap) {
+        var normalizedLayerId = toInteger(layerId, 0);
+        var currentParentId = toInteger(proposedParentId, 0);
+        var visited = {};
+        var key;
+
+        if (normalizedLayerId <= 0 || currentParentId <= 0) {
+            return false;
+        }
+
+        while (currentParentId > 0) {
+            if (currentParentId === normalizedLayerId) {
+                return true;
+            }
+
+            key = "id:" + currentParentId;
+            if (hasOwn(visited, key)) {
+                return true;
+            }
+            visited[key] = true;
+
+            if (!hasOwn(parentMap, currentParentId)) {
+                return false;
+            }
+
+            currentParentId = toInteger(parentMap[currentParentId], 0);
+        }
+
+        return false;
+    }
+
+    function parseMarkerInteger(text, allowZero) {
+        var numeric;
+
+        if (!/^[0-9]+$/.test(text)) {
+            return null;
+        }
+
+        numeric = Number(text);
+        if (!isFinite(numeric) || Math.floor(numeric) !== numeric) {
+            return null;
+        }
+
+        if (allowZero) {
+            return numeric >= 0 ? numeric : null;
+        }
+
+        return numeric > 0 ? numeric : null;
+    }
+
+    function validateRecord(record, groupId, seenLayerIds) {
+        var layerId;
+        var originalParentId;
+        var key;
+
+        if (record === null || typeof record === "undefined") {
+            throwMarkerError(markerErrorCodes.syntax, "Group Marker record is missing.");
+        }
+
+        layerId = parseMarkerInteger(String(record.layerId), false);
+        originalParentId = parseMarkerInteger(String(record.originalParentId), true);
+
+        if (layerId === null || originalParentId === null) {
+            throwMarkerError(markerErrorCodes.id, "Group Marker record ID is invalid.");
+        }
+
+        if (layerId === groupId || originalParentId === groupId) {
+            throwMarkerError(markerErrorCodes.selfId, "Group Marker contains the Group Null ID.");
+        }
+
+        key = "id:" + layerId;
+        if (hasOwn(seenLayerIds, key)) {
+            throwMarkerError(markerErrorCodes.duplicateLayerId, "Group Marker contains a duplicate Layer ID.");
+        }
+        seenLayerIds[key] = true;
+
+        return {
+            layerId: layerId,
+            originalParentId: originalParentId
+        };
+    }
+
+    function encodeGroupState(state) {
+        var groupId;
+        var records;
+        var lines;
+        var seenLayerIds = {};
+        var index;
+        var record;
+
+        if (state === null || typeof state === "undefined" || state.version !== 1) {
+            throwMarkerError(markerErrorCodes.syntax, "Group Marker version is invalid.");
+        }
+
+        groupId = parseMarkerInteger(String(state.groupId), false);
+        if (groupId === null) {
+            throwMarkerError(markerErrorCodes.id, "Group Marker group ID is invalid.");
+        }
+
+        records = state.records;
+        if (records === null || typeof records === "undefined" ||
+                typeof records.length !== "number") {
+            throwMarkerError(markerErrorCodes.syntax, "Group Marker records are invalid.");
+        }
+
+        lines = [markerHeader, "groupId=" + groupId];
+        for (index = 0; index < records.length; index += 1) {
+            record = validateRecord(records[index], groupId, seenLayerIds);
+            lines.push("record=" + record.layerId + "," + record.originalParentId);
+        }
+
+        return lines.join("\n");
+    }
+
+    function decodeGroupState(markerComment) {
+        var lines;
+        var groupIdText;
+        var groupId;
+        var records = [];
+        var seenLayerIds = {};
+        var index;
+        var line;
+        var recordText;
+        var recordParts;
+        var layerId;
+        var originalParentId;
+        var record;
+
+        if (markerComment === null || typeof markerComment === "undefined") {
+            throwMarkerError(markerErrorCodes.syntax, "Group Marker comment is missing.");
+        }
+
+        lines = String(markerComment).split(/\r\n|\n|\r/);
+        if (lines.length < 2 || lines[0] !== markerHeader) {
+            throwMarkerError(markerErrorCodes.syntax, "Group Marker header is invalid.");
+        }
+
+        if (lines[1].indexOf("groupId=") !== 0) {
+            throwMarkerError(markerErrorCodes.syntax, "Group Marker groupId line is invalid.");
+        }
+
+        groupIdText = lines[1].substring(8);
+        groupId = parseMarkerInteger(groupIdText, false);
+        if (groupId === null) {
+            throwMarkerError(markerErrorCodes.id, "Group Marker group ID is invalid.");
+        }
+
+        for (index = 2; index < lines.length; index += 1) {
+            line = lines[index];
+            if (line.indexOf("record=") !== 0) {
+                throwMarkerError(markerErrorCodes.syntax, "Group Marker record line is invalid.");
+            }
+
+            recordText = line.substring(7);
+            recordParts = recordText.split(",");
+            if (recordParts.length !== 2) {
+                throwMarkerError(markerErrorCodes.syntax, "Group Marker record syntax is invalid.");
+            }
+
+            layerId = parseMarkerInteger(recordParts[0], false);
+            originalParentId = parseMarkerInteger(recordParts[1], true);
+            if (layerId === null || originalParentId === null) {
+                throwMarkerError(markerErrorCodes.id, "Group Marker record ID is invalid.");
+            }
+
+            record = validateRecord({
+                layerId: layerId,
+                originalParentId: originalParentId
+            }, groupId, seenLayerIds);
+            records.push(record);
+        }
+
+        return {
+            version: 1,
+            groupId: groupId,
+            records: records
+        };
+    }
+
+    var GroupControlCore = {
+        MARKER_HEADER: markerHeader,
+        markerErrorCodes: markerErrorCodes,
+        clampLayerCount: clampLayerCount,
+        getTargetIndexRange: getTargetIndexRange,
+        getRootLayerIds: getRootLayerIds,
+        wouldCreateParentCycle: wouldCreateParentCycle,
+        encodeGroupState: encodeGroupState,
+        decodeGroupState: decodeGroupState
+    };
+
+    if (typeof module !== "undefined" && module.exports) {
+        module.exports = GroupControlCore;
+    }
+}());
