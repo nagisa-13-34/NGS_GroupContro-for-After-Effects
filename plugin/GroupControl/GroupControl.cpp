@@ -25,15 +25,9 @@ GlobalSetup(
 	PF_ParamDef *params[],
 	PF_LayerDef *output)
 {
-	out_data->my_version = PF_VERSION(
-		GROUP_CONTROL_MAJOR_VERSION,
-		GROUP_CONTROL_MINOR_VERSION,
-		GROUP_CONTROL_BUG_VERSION,
-		GROUP_CONTROL_STAGE_VERSION,
-		GROUP_CONTROL_BUILD_VERSION);
-
-	out_data->out_flags = PF_OutFlag_DEEP_COLOR_AWARE;
-	out_data->out_flags2 = PF_OutFlag2_SUPPORTS_THREADED_RENDERING;
+	out_data->my_version = GROUP_CONTROL_EFFECT_VERSION;
+	out_data->out_flags = GROUP_CONTROL_EFFECT_OUT_FLAGS;
+	out_data->out_flags2 = GROUP_CONTROL_EFFECT_OUT_FLAGS_2;
 
 	return PF_Err_NONE;
 }
@@ -104,9 +98,11 @@ EffectMain(
 	PF_InData *in_data,
 	PF_OutData *out_data,
 	PF_ParamDef *params[],
-	PF_LayerDef *output)
+	PF_LayerDef *output,
+	void *extra)
 {
 	PF_Err err = PF_Err_NONE;
+	(void)extra;
 
 	try {
 		switch (cmd) {
@@ -131,4 +127,3 @@ EffectMain(
 
 	return err;
 }
-

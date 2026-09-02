@@ -15,6 +15,7 @@
 		A10000100000000000000010 /* GroupControl.plugin */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = GroupControl.plugin; sourceTree = BUILT_PRODUCTS_DIR; };
 		A10000110000000000000011 /* GroupControl.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; name = GroupControl.cpp; path = ../GroupControl/GroupControl.cpp; sourceTree = SOURCE_ROOT; };
 		A10000120000000000000012 /* GroupControl.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = GroupControl.h; path = ../GroupControl/GroupControl.h; sourceTree = SOURCE_ROOT; };
+		A10000150000000000000015 /* GroupControlBuildConfig.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = GroupControlBuildConfig.h; path = ../GroupControl/GroupControlBuildConfig.h; sourceTree = SOURCE_ROOT; };
 		A10000130000000000000013 /* GroupControlPiPL.r */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.rez; name = GroupControlPiPL.r; path = ../GroupControl/GroupControlPiPL.r; sourceTree = SOURCE_ROOT; };
 		A10000140000000000000014 /* GroupControl.plugin-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = GroupControl.plugin-Info.plist; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
@@ -25,6 +26,7 @@
 			children = (
 				A10000110000000000000011 /* GroupControl.cpp */,
 				A10000120000000000000012 /* GroupControl.h */,
+				A10000150000000000000015 /* GroupControlBuildConfig.h */,
 				A10000130000000000000013 /* GroupControlPiPL.r */,
 				A10000140000000000000014 /* GroupControl.plugin-Info.plist */,
 				A10000210000000000000021 /* Products */,
@@ -198,4 +200,3 @@
 	};
 	rootObject = A10000220000000000000022 /* Project object */;
 }
-

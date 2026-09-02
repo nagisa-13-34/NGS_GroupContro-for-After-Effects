@@ -7,4 +7,3 @@
 enum {
 	GROUP_CONTROL_LAYER_COUNT_DISK_ID = 1
 };
-

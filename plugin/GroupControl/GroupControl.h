@@ -19,6 +19,7 @@
 #include "AE_Macros.h"
 #include "Param_Utils.h"
 
+#include "GroupControlBuildConfig.h"
 #include "GroupControlParams.h"
 
 #define GROUP_CONTROL_EFFECT_DISPLAY_NAME "Group Control"
@@ -32,6 +33,21 @@
 #define GROUP_CONTROL_BUG_VERSION 0
 #define GROUP_CONTROL_STAGE_VERSION PF_Stage_DEVELOP
 #define GROUP_CONTROL_BUILD_VERSION 1
+
+static_assert(
+	GROUP_CONTROL_EFFECT_VERSION == PF_VERSION(
+		GROUP_CONTROL_MAJOR_VERSION,
+		GROUP_CONTROL_MINOR_VERSION,
+		GROUP_CONTROL_BUG_VERSION,
+		GROUP_CONTROL_STAGE_VERSION,
+		GROUP_CONTROL_BUILD_VERSION),
+	"C++ and PiPL effect versions must stay aligned.");
+static_assert(
+	GROUP_CONTROL_EFFECT_OUT_FLAGS == PF_OutFlag_DEEP_COLOR_AWARE,
+	"C++ and PiPL global flags must stay aligned.");
+static_assert(
+	GROUP_CONTROL_EFFECT_OUT_FLAGS_2 == PF_OutFlag2_SUPPORTS_THREADED_RENDERING,
+	"C++ and PiPL global flags 2 must stay aligned.");
 
 enum {
 	GROUP_CONTROL_INPUT = 0,
@@ -47,8 +63,8 @@ extern "C" {
 		PF_InData *in_data,
 		PF_OutData *out_data,
 		PF_ParamDef *params[],
-		PF_LayerDef *output);
+		PF_LayerDef *output,
+		void *extra);
 }
 
 #endif // NGS_GROUP_CONTROL_H
-

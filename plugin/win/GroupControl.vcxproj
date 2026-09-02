@@ -55,7 +55,7 @@
       <Optimization>Disabled</Optimization>
       <AdditionalIncludeDirectories>$(SDK_ROOT)\Examples\Headers;$(SDK_ROOT)\Examples\Headers\SP;$(SDK_ROOT)\Examples\Util;$(SDK_ROOT)\Examples\Resources;$(MSBuildThisFileDirectory)..\GroupControl;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>MSWindows;WIN32;_WINDOWS;_DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>
+      <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
       <WarningLevel>Level3</WarningLevel>
       <TreatWarningAsError>false</TreatWarningAsError>
       <ExceptionHandling>Sync</ExceptionHandling>
@@ -73,7 +73,7 @@
       <Optimization>MaxSpeed</Optimization>
       <AdditionalIncludeDirectories>$(SDK_ROOT)\Examples\Headers;$(SDK_ROOT)\Examples\Headers\SP;$(SDK_ROOT)\Examples\Util;$(SDK_ROOT)\Examples\Resources;$(MSBuildThisFileDirectory)..\GroupControl;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>MSWindows;WIN32;_WINDOWS;NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <WarningLevel>Level3</WarningLevel>
       <TreatWarningAsError>false</TreatWarningAsError>
       <ExceptionHandling>Sync</ExceptionHandling>
@@ -92,6 +92,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\GroupControl\GroupControl.h" />
+    <ClInclude Include="..\GroupControl\GroupControlBuildConfig.h" />
     <ClInclude Include="..\GroupControl\GroupControlParams.h" />
   </ItemGroup>
   <ItemGroup>
