@@ -1,0 +1,1037 @@
+/*
+ * ExtendScript-compatible Effect synchronization for Group Control.
+ *
+ * The adapter only reads and writes the Layer Effect Parade. Transform
+ * properties are intentionally outside of this file's responsibility.
+ */
+var __groupControlEffectSyncHostExports = null;
+
+if (typeof module !== "undefined" && module !== null) {
+    try {
+        __groupControlEffectSyncHostExports = module.exports;
+    } catch (moduleError) {
+        __groupControlEffectSyncHostExports = null;
+    }
+}
+
+var GroupControlEffectSync = (function () {
+    var groupControlMatchName = "NGS_GroupControl";
+    var previousTargetsByGroup = {};
+
+    function hasOwn(object, key) {
+        return object !== null && typeof object !== "undefined" &&
+            Object.prototype.hasOwnProperty.call(object, key);
+    }
+
+    function isPositiveInteger(value) {
+        var numeric = Number(value);
+
+        return isFinite(numeric) && numeric > 0 &&
+            Math.floor(numeric) === numeric;
+    }
+
+    function normalizePositiveInteger(value) {
+        var numeric = Number(value);
+
+        if (!isPositiveInteger(numeric)) {
+            return null;
+        }
+
+        return numeric;
+    }
+
+    /*
+     * The Node contract loads this JSX include inside a vm context. Returning
+     * objects created from the host export keeps the public value shape
+     * comparable there, while the ExtendScript fallback remains plain ES3.
+     */
+    function makePlainObject() {
+        var constructor;
+
+        if (__groupControlEffectSyncHostExports !== null &&
+                typeof __groupControlEffectSyncHostExports !== "undefined") {
+            try {
+                constructor = __groupControlEffectSyncHostExports.constructor;
+                if (typeof constructor === "function") {
+                    return new constructor();
+                }
+            } catch (hostObjectError) {
+                /* Fall through to the ExtendScript object literal. */
+            }
+        }
+
+        return {};
+    }
+
+    function makeArrayFromSeed(seed) {
+        var items;
+
+        if (seed !== null && typeof seed !== "undefined") {
+            try {
+                if (typeof seed.slice === "function") {
+                    return seed.slice(0, 0);
+                }
+            } catch (sliceError) {
+                /* Try a collection's backing items below. */
+            }
+
+            try {
+                items = seed.items;
+                if (items !== null && typeof items !== "undefined" &&
+                        typeof items.slice === "function") {
+                    return items.slice(0, 0);
+                }
+            } catch (itemsError) {
+                /* Fall through to a local ES3 array. */
+            }
+        }
+
+        return [];
+    }
+
+    function getLayerId(layer) {
+        var id;
+
+        if (layer === null || typeof layer === "undefined") {
+            return 0;
+        }
+
+        try {
+            id = Number(layer.id);
+        } catch (idError) {
+            id = 0;
+        }
+
+        return isPositiveInteger(id) ? id : 0;
+    }
+
+    function getGroupKey(groupId) {
+        var normalized = normalizePositiveInteger(groupId);
+
+        return normalized === null ? "group:0" : "group:" + normalized;
+    }
+
+    function getEffectsProperty(layer) {
+        var effects = null;
+
+        if (layer === null || typeof layer === "undefined") {
+            return null;
+        }
+
+        if (typeof layer.property === "function") {
+            try {
+                effects = layer.property("ADBE Effect Parade");
+            } catch (propertyError) {
+                effects = null;
+            }
+
+            if (effects !== null && typeof effects !== "undefined") {
+                return effects;
+            }
+        }
+
+        try {
+            if (layer.effects !== null && typeof layer.effects !== "undefined") {
+                return layer.effects;
+            }
+        } catch (effectsError) {
+            return null;
+        }
+
+        return null;
+    }
+
+    function getCollectionCount(collection) {
+        var count = -1;
+
+        if (collection === null || typeof collection === "undefined") {
+            return 0;
+        }
+
+        try {
+            count = Number(collection.numProperties);
+        } catch (countError) {
+            count = -1;
+        }
+
+        if (isFinite(count) && count >= 0) {
+            return Math.floor(count);
+        }
+
+        try {
+            if (collection.items !== null && typeof collection.items !== "undefined" &&
+                    typeof collection.items.length === "number") {
+                return collection.items.length;
+            }
+        } catch (itemsError) {
+            return 0;
+        }
+
+        return 0;
+    }
+
+    function getCollectionItem(collection, index) {
+        var item = null;
+
+        if (collection === null || typeof collection === "undefined" || index < 1) {
+            return null;
+        }
+
+        if (typeof collection.property === "function") {
+            try {
+                item = collection.property(index);
+            } catch (propertyError) {
+                item = null;
+            }
+
+            if (item !== null && typeof item !== "undefined") {
+                return item;
+            }
+        }
+
+        try {
+            if (collection.items !== null && typeof collection.items !== "undefined") {
+                return collection.items[index - 1] || null;
+            }
+        } catch (itemsError) {
+            return null;
+        }
+
+        return null;
+    }
+
+    function getPropertyChild(propertyGroup, sourceChild, index) {
+        var child = getCollectionItem(propertyGroup, index);
+        var identifier;
+
+        if (child !== null && typeof child !== "undefined") {
+            return child;
+        }
+
+        if (propertyGroup === null || typeof propertyGroup === "undefined" ||
+                typeof propertyGroup.property !== "function") {
+            return null;
+        }
+
+        identifier = sourceChild === null || typeof sourceChild === "undefined" ?
+            "" : String(sourceChild.matchName || "");
+        if (identifier !== "") {
+            try {
+                child = propertyGroup.property(identifier);
+            } catch (matchNameError) {
+                child = null;
+            }
+
+            if (child !== null && typeof child !== "undefined") {
+                return child;
+            }
+        }
+
+        identifier = sourceChild === null || typeof sourceChild === "undefined" ?
+            "" : String(sourceChild.name || "");
+        if (identifier !== "") {
+            try {
+                child = propertyGroup.property(identifier);
+            } catch (nameError) {
+                child = null;
+            }
+        }
+
+        return child === null || typeof child === "undefined" ? null : child;
+    }
+
+    function getPropertyDisplayName(property) {
+        var name = "";
+        var matchName = "";
+
+        if (property === null || typeof property === "undefined") {
+            return "";
+        }
+
+        try {
+            name = String(property.name || "");
+        } catch (nameError) {
+            name = "";
+        }
+
+        if (name !== "") {
+            return name;
+        }
+
+        try {
+            matchName = String(property.matchName || "");
+        } catch (matchNameError) {
+            matchName = "";
+        }
+
+        return matchName;
+    }
+
+    function getEffectName(effect) {
+        var name = "";
+        var matchName = "";
+
+        if (effect === null || typeof effect === "undefined") {
+            return "";
+        }
+
+        try {
+            name = String(effect.name || "");
+        } catch (nameError) {
+            name = "";
+        }
+
+        if (name !== "") {
+            return name;
+        }
+
+        try {
+            matchName = String(effect.matchName || "");
+        } catch (matchNameError) {
+            matchName = "";
+        }
+
+        return matchName;
+    }
+
+    function getEffectMatchName(effect) {
+        if (effect === null || typeof effect === "undefined") {
+            return "";
+        }
+
+        try {
+            return String(effect.matchName || "");
+        } catch (matchNameError) {
+            return "";
+        }
+    }
+
+    function quoteExpressionText(value) {
+        return String(value)
+            .replace(/\\/g, "\\\\")
+            .replace(/"/g, '\\"')
+            .replace(/\r/g, "\\r")
+            .replace(/\n/g, "\\n");
+    }
+
+    function makeReservedEffectName(groupId, effectIndex, sourceName) {
+        return "[GFX:" + String(groupId) + ":" + String(effectIndex) + "] " +
+            String(sourceName);
+    }
+
+    function parseReservedEffectName(name) {
+        var match = /^\[GFX:([0-9]+):([0-9]+)\] (.*)$/.exec(String(name));
+        var groupId;
+        var effectIndex;
+        var result;
+
+        if (match === null) {
+            return null;
+        }
+
+        groupId = normalizePositiveInteger(match[1]);
+        effectIndex = normalizePositiveInteger(match[2]);
+        if (groupId === null || effectIndex === null || match[3] === "") {
+            return null;
+        }
+
+        result = makePlainObject();
+        result.groupId = groupId;
+        result.effectIndex = effectIndex;
+        result.sourceName = match[3];
+        return result;
+    }
+
+    function buildEffectExpressionPath(layerName, effectName, propertyPath) {
+        var expression = "thisComp.layer(\"" + quoteExpressionText(layerName) +
+            "\").effect(\"" + quoteExpressionText(effectName) + "\")";
+        var path = propertyPath;
+        var index;
+
+        if (path === null || typeof path === "undefined") {
+            path = [];
+        } else if (typeof path === "string") {
+            path = [path];
+        }
+
+        if (typeof path.length !== "number") {
+            path = [];
+        }
+
+        for (index = 0; index < path.length; index += 1) {
+            expression += "(\"" + quoteExpressionText(path[index]) + "\")";
+        }
+
+        return expression;
+    }
+
+    function getSourceEffects(group) {
+        var effects = getEffectsProperty(group);
+        var sourceEffects = makeArrayFromSeed(effects === null ? null : effects.items);
+        var count = getCollectionCount(effects);
+        var index;
+        var effect;
+        var effectName;
+
+        for (index = 1; index <= count; index += 1) {
+            effect = getCollectionItem(effects, index);
+            if (effect === null || typeof effect === "undefined") {
+                continue;
+            }
+
+            if (getEffectMatchName(effect) === groupControlMatchName) {
+                continue;
+            }
+
+            effectName = getEffectName(effect);
+            if (parseReservedEffectName(effectName) !== null) {
+                continue;
+            }
+
+            sourceEffects.push(effect);
+        }
+
+        return sourceEffects;
+    }
+
+    function getSourceRecords(group) {
+        var effects = getEffectsProperty(group);
+        var records = [];
+        var count = getCollectionCount(effects);
+        var index;
+        var effect;
+        var sourceName;
+        var matchName;
+
+        for (index = 1; index <= count; index += 1) {
+            effect = getCollectionItem(effects, index);
+            if (effect === null || typeof effect === "undefined") {
+                continue;
+            }
+
+            matchName = getEffectMatchName(effect);
+            if (matchName === groupControlMatchName) {
+                continue;
+            }
+
+            sourceName = getEffectName(effect);
+            if (parseReservedEffectName(sourceName) !== null) {
+                continue;
+            }
+
+            records.push({
+                effect: effect,
+                effectIndex: index,
+                matchName: matchName,
+                sourceName: sourceName
+            });
+        }
+
+        return records;
+    }
+
+    function sameLayer(left, right) {
+        var leftId;
+        var rightId;
+
+        if (left === right) {
+            return true;
+        }
+
+        leftId = getLayerId(left);
+        rightId = getLayerId(right);
+        return leftId > 0 && rightId > 0 && leftId === rightId;
+    }
+
+    function containsLayer(layers, wanted) {
+        var index;
+
+        for (index = 0; index < layers.length; index += 1) {
+            if (sameLayer(layers[index], wanted)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    function addUniqueLayer(layers, layer) {
+        if (layer !== null && typeof layer !== "undefined" &&
+                !containsLayer(layers, layer)) {
+            layers.push(layer);
+        }
+    }
+
+    function normalizeLayers(layers) {
+        var normalized = [];
+        var index;
+
+        if (layers === null || typeof layers === "undefined") {
+            return normalized;
+        }
+
+        if (typeof layers === "object" && typeof layers.length === "number" &&
+                typeof layers !== "string") {
+            for (index = 0; index < layers.length; index += 1) {
+                addUniqueLayer(normalized, layers[index]);
+            }
+            return normalized;
+        }
+
+        if (layers.items !== null && typeof layers.items !== "undefined" &&
+                typeof layers.items.length === "number") {
+            for (index = 0; index < layers.items.length; index += 1) {
+                addUniqueLayer(normalized, layers.items[index]);
+            }
+            return normalized;
+        }
+
+        addUniqueLayer(normalized, layers);
+        return normalized;
+    }
+
+    function getParent(layer) {
+        if (layer === null || typeof layer === "undefined") {
+            return null;
+        }
+
+        try {
+            return layer.parent === null || typeof layer.parent === "undefined" ?
+                null : layer.parent;
+        } catch (parentError) {
+            return null;
+        }
+    }
+
+    function isEligibleTarget(group, targetLayers, layer) {
+        var parent;
+
+        if (layer === null || typeof layer === "undefined" ||
+                sameLayer(layer, group)) {
+            return false;
+        }
+
+        parent = getParent(layer);
+        if (parent === null) {
+            return true;
+        }
+
+        if (sameLayer(parent, group)) {
+            return true;
+        }
+
+        return containsLayer(targetLayers, parent);
+    }
+
+    function getContainingComp(group) {
+        var candidateNames = ["containingComp", "containingComposition", "comp"];
+        var index;
+        var candidate;
+
+        if (group === null || typeof group === "undefined") {
+            return null;
+        }
+
+        for (index = 0; index < candidateNames.length; index += 1) {
+            try {
+                candidate = group[candidateNames[index]];
+            } catch (candidateError) {
+                candidate = null;
+            }
+
+            if (candidate !== null && typeof candidate !== "undefined") {
+                return candidate;
+            }
+        }
+
+        return null;
+    }
+
+    function getCompLayers(comp) {
+        var layers = [];
+        var collection;
+        var count = 0;
+        var index;
+        var layer;
+
+        if (comp === null || typeof comp === "undefined") {
+            return layers;
+        }
+
+        collection = comp.layers || comp;
+        try {
+            count = Number(comp.numLayers);
+        } catch (countError) {
+            count = 0;
+        }
+
+        if (!isFinite(count) || count < 0) {
+            count = 0;
+        }
+
+        if (count === 0) {
+            count = getCollectionCount(collection);
+        }
+
+        for (index = 1; index <= Math.floor(count); index += 1) {
+            layer = null;
+
+            if (typeof comp.layer === "function") {
+                try {
+                    layer = comp.layer(index);
+                } catch (layerError) {
+                    layer = null;
+                }
+            }
+
+            if (layer === null || typeof layer === "undefined") {
+                layer = getCollectionItem(collection, index);
+            }
+
+            addUniqueLayer(layers, layer);
+        }
+
+        return layers;
+    }
+
+    function copyArray(values) {
+        var copy = [];
+        var index;
+
+        if (values === null || typeof values === "undefined" ||
+                typeof values.length !== "number") {
+            return copy;
+        }
+
+        for (index = 0; index < values.length; index += 1) {
+            copy.push(values[index]);
+        }
+
+        return copy;
+    }
+
+    function buildCleanupLayers(group, targetLayers) {
+        var layers = [];
+        var previous = previousTargetsByGroup[getGroupKey(getLayerId(group))];
+        var compLayers = getCompLayers(getContainingComp(group));
+        var index;
+
+        for (index = 0; index < targetLayers.length; index += 1) {
+            addUniqueLayer(layers, targetLayers[index]);
+        }
+
+        if (previous !== null && typeof previous !== "undefined") {
+            for (index = 0; index < previous.length; index += 1) {
+                addUniqueLayer(layers, previous[index]);
+            }
+        }
+
+        for (index = 0; index < compLayers.length; index += 1) {
+            addUniqueLayer(layers, compLayers[index]);
+        }
+
+        return layers;
+    }
+
+    function rememberTargets(group, targetLayers) {
+        previousTargetsByGroup[getGroupKey(getLayerId(group))] = copyArray(targetLayers);
+    }
+
+    function getReservedInfo(effect) {
+        if (effect === null || typeof effect === "undefined") {
+            return null;
+        }
+
+        return parseReservedEffectName(getEffectName(effect));
+    }
+
+    function findOwnedEffect(effects, groupId, effectIndex) {
+        var count = getCollectionCount(effects);
+        var index;
+        var effect;
+        var info;
+
+        for (index = 1; index <= count; index += 1) {
+            effect = getCollectionItem(effects, index);
+            info = getReservedInfo(effect);
+            if (info !== null && info.groupId === groupId &&
+                    info.effectIndex === effectIndex) {
+                return effect;
+            }
+        }
+
+        return null;
+    }
+
+    function collectionContains(collection, wanted) {
+        var count = getCollectionCount(collection);
+        var index;
+
+        for (index = 1; index <= count; index += 1) {
+            if (getCollectionItem(collection, index) === wanted) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    function removeEffect(effects, effect) {
+        var removed = false;
+        var index;
+
+        if (effect === null || typeof effect === "undefined") {
+            return false;
+        }
+
+        try {
+            if (typeof effect.remove === "function") {
+                effect.remove();
+                removed = true;
+            }
+        } catch (effectRemoveError) {
+            removed = false;
+        }
+
+        if (removed && !collectionContains(effects, effect)) {
+            return true;
+        }
+
+        try {
+            if (effects !== null && typeof effects !== "undefined" &&
+                    typeof effects.remove === "function") {
+                effects.remove(effect);
+                removed = true;
+            }
+        } catch (collectionRemoveError) {
+            removed = false;
+        }
+
+        if (removed && !collectionContains(effects, effect)) {
+            return true;
+        }
+
+        try {
+            if (effects !== null && typeof effects.items !== "undefined" &&
+                    effects.items !== null &&
+                    typeof effects.items.splice === "function") {
+                for (index = effects.items.length - 1; index >= 0; index -= 1) {
+                    if (effects.items[index] === effect) {
+                        effects.items.splice(index, 1);
+                        removed = true;
+                        break;
+                    }
+                }
+            }
+        } catch (itemsRemoveError) {
+            removed = false;
+        }
+
+        return removed && !collectionContains(effects, effect);
+    }
+
+    function removeOwnedFromEffects(effects, groupId, keepMap) {
+        var count = getCollectionCount(effects);
+        var removedCount = 0;
+        var index;
+        var effect;
+        var info;
+        var key;
+
+        for (index = count; index >= 1; index -= 1) {
+            effect = getCollectionItem(effects, index);
+            info = getReservedInfo(effect);
+            if (info === null || info.groupId !== groupId) {
+                continue;
+            }
+
+            key = String(info.effectIndex);
+            if (keepMap !== null && typeof keepMap !== "undefined" &&
+                    hasOwn(keepMap, key) && keepMap[key] === effect) {
+                continue;
+            }
+
+            if (removeEffect(effects, effect)) {
+                removedCount += 1;
+            }
+        }
+
+        return removedCount;
+    }
+
+    function cloneValue(value) {
+        var clone;
+        var index;
+
+        if (value === null || typeof value !== "object" ||
+                typeof value.length !== "number") {
+            return value;
+        }
+
+        clone = [];
+        for (index = 0; index < value.length; index += 1) {
+            clone.push(value[index]);
+        }
+
+        return clone;
+    }
+
+    function copyStaticValue(sourceProperty, targetProperty) {
+        var value;
+
+        try {
+            value = cloneValue(sourceProperty.value);
+            if (typeof targetProperty.setValue === "function") {
+                targetProperty.setValue(value);
+            } else {
+                targetProperty.value = value;
+            }
+            return true;
+        } catch (copyError) {
+            return false;
+        }
+    }
+
+    function appendPath(path, value) {
+        var nextPath = copyArray(path);
+
+        nextPath.push(value);
+        return nextPath;
+    }
+
+    function setTerminalLink(sourceProperty, targetProperty, layerName,
+            effectName, propertyPath, initializeStatic) {
+        var canSetExpression = true;
+        var expression;
+        var linked = false;
+
+        try {
+            canSetExpression = targetProperty.canSetExpression !== false;
+        } catch (capabilityError) {
+            canSetExpression = true;
+        }
+
+        if (canSetExpression) {
+            expression = buildEffectExpressionPath(layerName, effectName, propertyPath);
+            try {
+                if (String(targetProperty.expression || "") !== expression) {
+                    targetProperty.expression = expression;
+                }
+                targetProperty.expressionEnabled = true;
+                linked = true;
+            } catch (expressionError) {
+                linked = false;
+            }
+        }
+
+        if (!linked && initializeStatic) {
+            copyStaticValue(sourceProperty, targetProperty);
+        }
+
+        return linked;
+    }
+
+    function syncPropertyTree(sourceGroup, targetGroup, layerName, effectName,
+            propertyPath, initializeStatic, stats) {
+        var count = getCollectionCount(sourceGroup);
+        var index;
+        var sourceProperty;
+        var targetProperty;
+        var displayName;
+        var childCount;
+
+        for (index = 1; index <= count; index += 1) {
+            sourceProperty = getCollectionItem(sourceGroup, index);
+            if (sourceProperty === null || typeof sourceProperty === "undefined") {
+                continue;
+            }
+
+            targetProperty = getPropertyChild(targetGroup, sourceProperty, index);
+            if (targetProperty === null || typeof targetProperty === "undefined") {
+                continue;
+            }
+
+            displayName = getPropertyDisplayName(sourceProperty);
+            childCount = getCollectionCount(sourceProperty);
+            if (childCount > 0) {
+                syncPropertyTree(sourceProperty, targetProperty, layerName, effectName,
+                    appendPath(propertyPath, displayName), initializeStatic, stats);
+            } else {
+                setTerminalLink(sourceProperty, targetProperty, layerName, effectName,
+                    appendPath(propertyPath, displayName), initializeStatic);
+                if (stats !== null && typeof stats !== "undefined") {
+                    stats.terminalCount += 1;
+                }
+            }
+        }
+    }
+
+    function addEffectCopy(effects, sourceRecord) {
+        if (effects === null || typeof effects === "undefined" ||
+                typeof effects.addProperty !== "function" ||
+                sourceRecord.matchName === "") {
+            return null;
+        }
+
+        try {
+            return effects.addProperty(sourceRecord.matchName);
+        } catch (addError) {
+            return null;
+        }
+    }
+
+    function setEffectName(effect, name) {
+        try {
+            effect.name = name;
+        } catch (nameError) {
+            /* A host failure must not stop other target Layers. */
+        }
+    }
+
+    function syncTargetEffects(group, groupId, targetLayers, layer, records, stats) {
+        var effects = getEffectsProperty(layer);
+        var keepMap = {};
+        var recordIndex;
+        var sourceRecord;
+        var copy;
+        var oldCopy;
+        var replacement;
+        var created;
+        var key;
+        var reservedName;
+
+        if (effects === null || typeof effects === "undefined" ||
+                sameLayer(layer, group)) {
+            return;
+        }
+
+        if (!isEligibleTarget(group, targetLayers, layer)) {
+            stats.removedCount += removeOwnedFromEffects(effects, groupId, null);
+            return;
+        }
+
+        for (recordIndex = 0; recordIndex < records.length; recordIndex += 1) {
+            sourceRecord = records[recordIndex];
+            key = String(sourceRecord.effectIndex);
+            copy = findOwnedEffect(effects, groupId, sourceRecord.effectIndex);
+            created = false;
+
+            if (copy !== null && getEffectMatchName(copy) !== sourceRecord.matchName) {
+                oldCopy = copy;
+                replacement = addEffectCopy(effects, sourceRecord);
+                if (replacement !== null) {
+                    copy = replacement;
+                    created = true;
+                    stats.createdCount += 1;
+                    stats.removedCount += removeEffect(effects, oldCopy) ? 1 : 0;
+                }
+            } else if (copy === null) {
+                copy = addEffectCopy(effects, sourceRecord);
+                if (copy !== null) {
+                    created = true;
+                    stats.createdCount += 1;
+                }
+            }
+
+            if (copy === null || typeof copy === "undefined") {
+                continue;
+            }
+
+            reservedName = makeReservedEffectName(groupId,
+                sourceRecord.effectIndex, sourceRecord.sourceName);
+            setEffectName(copy, reservedName);
+
+            try {
+                syncPropertyTree(sourceRecord.effect, copy, String(group.name || ""),
+                    sourceRecord.sourceName, [], created, stats);
+            } catch (propertySyncError) {
+                /* Continue with the next source Effect. */
+            }
+
+            keepMap[key] = copy;
+        }
+
+        stats.removedCount += removeOwnedFromEffects(effects, groupId, keepMap);
+    }
+
+    function syncGroupEffects(group, targetLayers) {
+        var normalizedTargets = normalizeLayers(targetLayers);
+        var cleanupLayers = buildCleanupLayers(group, normalizedTargets);
+        var records = getSourceRecords(group);
+        var groupId = getLayerId(group);
+        var stats = makePlainObject();
+        var index;
+        var layer;
+
+        stats.sourceCount = records.length;
+        stats.targetCount = normalizedTargets.length;
+        stats.eligibleCount = 0;
+        stats.createdCount = 0;
+        stats.removedCount = 0;
+        stats.terminalCount = 0;
+
+        if (groupId <= 0) {
+            return stats;
+        }
+
+        for (index = 0; index < cleanupLayers.length; index += 1) {
+            layer = cleanupLayers[index];
+            if (isEligibleTarget(group, normalizedTargets, layer)) {
+                stats.eligibleCount += 1;
+            }
+
+            try {
+                syncTargetEffects(group, groupId, normalizedTargets, layer, records, stats);
+            } catch (targetSyncError) {
+                /* One unavailable Layer must not stop the remaining Layers. */
+            }
+        }
+
+        rememberTargets(group, normalizedTargets);
+        return stats;
+    }
+
+    function removeOwnedEffects(layers, groupId) {
+        var normalizedLayers = normalizeLayers(layers);
+        var normalizedGroupId = normalizePositiveInteger(groupId);
+        var result = makePlainObject();
+        var removedCount = 0;
+        var index;
+        var effects;
+
+        result.removedCount = 0;
+        if (normalizedGroupId === null) {
+            return result;
+        }
+
+        delete previousTargetsByGroup[getGroupKey(normalizedGroupId)];
+        for (index = 0; index < normalizedLayers.length; index += 1) {
+            effects = getEffectsProperty(normalizedLayers[index]);
+            if (effects === null || typeof effects === "undefined") {
+                continue;
+            }
+
+            try {
+                removedCount += removeOwnedFromEffects(effects, normalizedGroupId, null);
+            } catch (removeError) {
+                /* Continue with the remaining Layers. */
+            }
+        }
+
+        result.removedCount = removedCount;
+        return result;
+    }
+
+    return {
+        makeReservedEffectName: makeReservedEffectName,
+        parseReservedEffectName: parseReservedEffectName,
+        buildEffectExpressionPath: buildEffectExpressionPath,
+        getSourceEffects: getSourceEffects,
+        syncGroupEffects: syncGroupEffects,
+        removeOwnedEffects: removeOwnedEffects
+    };
+}());
+
+if (typeof module !== "undefined" && module !== null && module.exports) {
+    module.exports = GroupControlEffectSync;
+}
