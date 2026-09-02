@@ -843,3 +843,43 @@ Apply時のみParent構造を再計算する。
 ```
 
 という構造を理解できる設計にする。
+
+---
+
+# 28. 追加仕様：Group Nullの通常Effect継承
+
+この章は、最新のユーザー決定によりv1へ追加された仕様である。旧章25の「Group Effect」、旧章6・24の「常時監視なし」という記載は、この章の範囲では上書きされる。
+
+## 28.1 方針
+
+Group NullのEffect Paradeにある`NGS_GroupControl`以外の通常Effectを、Layer Countで決まるGroup対象Layerへ自動複製する。専用のGroup Effectは作らず、複製先にもAfter Effects標準の通常Effectを追加する。
+
+Transformは従来どおりAE標準Parentだけで制御し、LayerのPosition、Scale、Rotation、OrientationなどへExpressionを追加しない。Pre-composeも行わない。
+
+## 28.2 対象と識別
+
+Root Layerだけでなく、Group対象内の内部ChildにもEffectを複製する。外部Parentを持つ候補Layerは、既存Parentを壊さない安全方針に合わせて複製対象から除外する。
+
+Group Controlが追加した複製Effectは、表示名の先頭に`[GFX:<Group NullのLayer.id>:<Effect index>]`を付けて識別する。予約接頭辞を持たないChild側のEffectは、同じmatchNameや表示名でもGroup Controlの同期対象にしない。
+
+Group NullのEffect Paradeでは`NGS_GroupControl`だけを除外し、その他の通常Effectをすべてソース候補とする。特定のネイティブEffectだけを許可する一覧は持たず、複製時はソースの`matchName`を`addProperty`へ渡す。カスタムのGroup EffectやPre-composeを、この継承処理のために追加してはいけない。
+
+Effectの複製対象は、Group Nullのindex直下からLayer Countで得た現在の候補集合のうち、ParentがないLayer、Group Null自身をParentに持つLayer、または候補集合内のLayerをParentに持つLayerとする。Rootだけでなく候補内の内部Childにも複製する。候補集合の外部LayerをParentに持つLayerは、候補数に含めたまま複製対象から除外する。
+
+予約名の完全な形式は`[GFX:<Group NullのLayer.id>:<Group Null側Effectの1-based index>] <元のEffect名>`とする。同じGroup IDとEffect indexの既存複製は再利用し、元Effectの表示名やパラメータ構造が変わった場合は予約名とリンクを更新する。予約接頭辞を手動で外したEffectはGroup Control所有とはみなさず、以後の同期やUngroupで削除しない。
+
+## 28.3 値と監視
+
+複製Effectの末端パラメータだけに、Group Nullの元Effectを参照するExpressionを設定する。Group Null側のキーやExpressionを含む値は、AEのExpression評価により毎フレーム複製側へ反映する。Layer Transformへは設定しない。
+
+Panel起動中は`app.scheduleTask`で約200ms間隔のアイドル監視を行い、Effectの追加・削除、Group対象変更、複製の手動削除を差分反映する。数値を毎フレームJSXから書き込む常駐処理ではない。Panel起動時に現在状態へ同期する。
+
+PropertyツリーはEffect Parade内だけを再帰走査し、Expressionを設定できる末端Propertyに限って、`thisComp.layer("<Group Null名>").effect("<元Effect名>")("<Property名>")...`形式のExpressionを設定する。Expression非対応の末端Propertyは現在値を一度だけコピーし、同期不能として扱う。`ADBE Transform Group`やその配下へExpressionを書き込んではいけない。
+
+監視は構造差分だけを扱い、同じGroupと対象Layerに対する追加・削除・名称変更・対象範囲変更・手動削除を次回同期で反映する。値の毎フレーム`setValue`は行わない。監視の各回は1回実行型の次回`app.scheduleTask`を予約し、重複予約を作らない。Panel未起動中は監視せず、起動時の最初の同期で現在状態へ追いつく。
+
+## 28.4 Child固有EffectとUngroup
+
+Childへ直接追加された通常Effectは予約接頭辞がないため、削除・上書きしない。Ungroup時はGroup Controlが付けた予約接頭辞の複製だけを削除し、Child固有Effectは残す。
+
+Effectの追加、削除、複製先への`addProperty`、Expression設定のいずれかが失敗しても、失敗したEffectまたはLayer以外の同期処理は可能な範囲で継続する。Ungroupでは対象Group NullのLayer IDに一致する予約複製だけを全対象Layerから削除し、通常のChild Effectや予約接頭辞を持たないEffectは残す。
