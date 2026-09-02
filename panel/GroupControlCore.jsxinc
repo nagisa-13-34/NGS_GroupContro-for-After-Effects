@@ -2,7 +2,7 @@
  * ExtendScript-compatible pure logic for Group Control.
  * Keep this file to ES3 syntax so it can be included by a ScriptUI panel.
  */
-(function () {
+var GroupControlCore = (function () {
     var markerHeader = "NGS_GROUP_CONTROL_V1";
     var markerErrorCodes = {
         syntax: "MARKER_SYNTAX",
@@ -332,7 +332,7 @@
         };
     }
 
-    var GroupControlCore = {
+    return {
         MARKER_HEADER: markerHeader,
         markerErrorCodes: markerErrorCodes,
         clampLayerCount: clampLayerCount,
@@ -342,8 +342,8 @@
         encodeGroupState: encodeGroupState,
         decodeGroupState: decodeGroupState
     };
-
-    if (typeof module !== "undefined" && module.exports) {
-        module.exports = GroupControlCore;
-    }
 }());
+
+if (typeof module !== "undefined" && module.exports) {
+    module.exports = GroupControlCore;
+}
