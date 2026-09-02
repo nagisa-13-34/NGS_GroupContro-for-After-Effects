@@ -2,11 +2,13 @@
 
 ## 1. 概要
 
-After Effects上で、AviUtlの「グループ制御」に近い操作感を実現するスクリプト。
+After Effects上で、AviUtlの「グループ制御」に近い操作感を実現するC++ EffectとJSX Panel。
 
 専用のGroup Nullを作成し、Group Nullの直下にある指定数のレイヤーをグループ対象として扱う。
 
 グループ対象レイヤーは、Group NullのPosition / Scale / Rotationによってまとめて操作できる。
+
+C++ EffectはGroup Nullの識別とLayer Countの保持だけを担当し、レイヤー検索、Parent変更、Marker管理、Undo、UIはJSX Panelが担当する。
 
 v1では「レイヤー数指定」を最重要機能とする。
 
@@ -50,11 +52,14 @@ Background
 
 # 3. 対応環境
 
-* Adobe After Effects
-* ExtendScript / JSX
-* ScriptUI Panel形式
-* After Effectsの標準機能のみで動作すること
-* 外部ライブラリ不要
+* Adobe After Effects 2024+
+* Windows・macOS
+* C++ Effect（Group Control）
+* ExtendScript / JSX + ScriptUI Panel
+* ScriptUI PanelはAfter EffectsのWindowメニューから開けるDockable Panelとして動作すること
+* Windows成果物は`.aex`、macOS成果物は`.plugin`とする
+* C++ Effect採用は、Prompt.mdにある「ExtendScript / JSX + ScriptUIのみ」という制約を置き換える本仕様の明示的な変更である
+* CEP、UXP、外部ランタイムライブラリは使用しない
 
 ---
 
@@ -63,6 +68,11 @@ Background
 ## 4.1 作成
 
 スクリプトの `Create Group` を実行すると、現在のコンポジションにNull Layerを作成する。
+
+作成位置は次のとおり固定する。
+
+* レイヤーが選択されている場合は、最上位選択Layerの直上に作成する
+* レイヤーが選択されていない場合は、Comp最上段に作成する
 
 Null名の初期値：
 
@@ -83,7 +93,7 @@ Null名の初期値：
 
 ## 4.2 Group識別方法
 
-Group Nullには専用Effectを追加する。
+Group NullにはC++製の専用Effectを追加する。
 
 Effect名：
 
@@ -91,20 +101,37 @@ Effect名：
 Group Control
 ```
 
-内部には最低限、
+Effect matchName：
+
+```text
+NGS_GroupControl
+```
+
+Effect内部にはLayer Countという整数Sliderパラメータを1つだけ持たせる。
+
+パラメータ名：
 
 ```text
 Layer Count
 ```
 
-を持つ。
+パラメータ matchName：
+
+```text
+NGS_GroupControl-LayerCount
+```
+
+パラメータ範囲は`0..9999`、初期値は`0`とする。
+
+C++ EffectはパススルーEffectとし、画像処理やParent変更を行わない。
 
 Group Nullかどうかの判定は、
 
 * Null Layerである
-* `Group Control` Effectを持っている
+* matchNameが`NGS_GroupControl`のEffectを持っている
+* そのEffectにmatchNameが`NGS_GroupControl-LayerCount`のパラメータを持っている
 
-の両方を満たした場合とする。
+のすべてを満たした場合とする。
 
 レイヤー名 `[G]` のみで判定しない。
 
@@ -150,9 +177,25 @@ Layer Countの最小値：
 
 0の場合は対象レイヤーなし。
 
+Create Group直後のLayer Count初期値も`0`とする。
+
 ---
 
-## 5.3 最大値
+## 5.3 Panel上限とEffect安全上限
+
+Panel上のLayer Countの有効範囲は、
+
+```text
+0..Comp全体のLayer数
+```
+
+とする。ExtendScript / JSX側で`comp.numLayers`へ正規化する。
+
+C++ Effect内部の安全上限は`9999`とする。Panelから設定できる上限はComp全体のLayer数とし、Panel上限を超える値は`comp.numLayers`へ正規化する。
+
+---
+
+## 5.4 候補数超過時
 
 Group Nullより下に存在するレイヤー数を超えて指定された場合は、存在するレイヤーまでを対象にする。
 
@@ -187,12 +230,16 @@ GROUP CONTROL
 Selected Group
 
 Layers
-[ - ]   5   [ + ]
+[ - ]   0   [ + ]
+
+Status Text
 
 [ Apply ]
 
 [ Ungroup ]
 ```
+
+Panelは常時監視を行わず、ボタン操作の前後とPanelアクティブ化時だけ表示を更新する。通常操作のメッセージはStatus Textへ表示し、alertを乱用しない。
 
 ---
 
@@ -203,10 +250,13 @@ Layers
 ## 動作
 
 1. Active Compを取得
-2. Group Nullを作成
-3. Group Control Effectを追加
-4. Layer Countを設定
-5. Group Nullを選択状態にする
+2. 選択状態から作成位置を決める
+3. 作成位置へGroup Nullを作成
+4. C++製Group Control Effectを追加
+5. Layer Countを`0`に設定
+6. Group Nullを選択状態にする
+
+C++ Effectの追加に失敗した場合は、作成したNullを残さず、Status Textへ失敗理由を表示する。
 
 ---
 
@@ -215,14 +265,14 @@ Layers
 UI上の
 
 ```text
-[ - ] 5 [ + ]
+[ - ] 0 [ + ]
 ```
 
 でLayer Countを変更できる。
 
 ## + ボタン
 
-Layer Countを1増やす。
+Layer Countを1増やす。ただしPanel上限の`comp.numLayers`を超えないようにする。
 
 変更後、自動的にGroupを再構築する。
 
@@ -248,6 +298,10 @@ Group Nullのindex + 1
 
 から下方向にLayer Count分。
 
+候補LayerはParent変更前に、現在のGroup NullのindexとLayer Countから毎回取得する。以前の対象を固定保存して、それを基準にしない。
+
+外部Parent付きLayerや循環ParentになるLayerをスキップする場合でも、候補数には含める。後続Layerを繰り上げて候補数を補充しない。
+
 ---
 
 # 10. Parenting仕様
@@ -255,6 +309,8 @@ Group Nullのindex + 1
 Group NullによるTransform制御にはAE標準のParent機能を使用する。
 
 ただし既存Parent構造を壊さないこと。
+
+Parentの設定と解除はAE標準のParent動作に従う。
 
 ---
 
@@ -293,7 +349,7 @@ Group
 
 をRoot Layerとする。
 
-Root LayerのみGroup NullへParentする。
+ただし、Parentがグループ対象外に存在するLayerはRoot候補に含めるが、既存Parentを維持してGroup Nullへ接続しない。ParentがないRoot LayerだけをGroup NullへParentする。
 
 ---
 
@@ -362,7 +418,9 @@ v1では既存Parentを破壊しない。
 
 対象レイヤーのParentがグループ対象外にある場合、v1では既存Parentを優先する。
 
-つまりGroup NullのTransform対象から除外される可能性がある。
+そのレイヤーはGroup Nullへ接続せず、Group NullのTransform対象から除外する。
+
+ただし、そのレイヤーはLayer Countで決まる候補数には含める。後続Layerで候補数を補充しない。
 
 該当レイヤーについては内部的に警告対象として扱う。
 
@@ -381,6 +439,15 @@ Group Nullによって制御するTransform：
 * Rotation
 
 AE標準Parent機能を使うため、追加Expressionは使用しない。
+
+次の補正や変換は行わない。
+
+* ワールドTransform補正
+* キーフレーム補正
+* キーフレームのベイク
+* Expressionの書き換え
+
+キーフレーム付きだがExpressionのないLayerは、キーを補正せずAE標準Parent動作で処理する。Expression付きRootとアニメーション中のGroup Nullは安全のためParent変更を行わず、Status Textへ理由を表示する。
 
 ---
 
@@ -495,26 +562,35 @@ C
 
 # 19. 対象変更時の解除処理
 
-Apply時には、以前Group NullへParentされていたレイヤーのうち、現在の対象外になったレイヤーを解除する。
+Apply時には、Group Markerに記録された以前のParent関係を確認し、以前Group NullへParentされていたレイヤーのうち、現在の対象外になったレイヤーを解除する。
 
-ただし、このGroup Controlが設定したParentだけを解除すること。
+ただし、現在のParentが対象Group Nullであり、Group Markerに記録されたこのGroup Control所有のParentだけを解除すること。
+
+ユーザーが手動で変更したParentは上書きも解除もしない。
+
+以前のGroup Control所有Parentを解除した後、現在の候補範囲からRoot Layerを再計算する。成功したParent変更だけをGroup Markerへ記録する。
 
 ユーザー自身が設定したParentを勝手に解除してはいけない。
 
 ---
 
-# 20. 管理データ
+# 20. Group MarkerとParent所有権
 
-Group Controlがどのレイヤーを操作したか追跡できる仕組みを持つこと。
+Group Controlがどのレイヤーを操作したかは、Group Null上の専用Group Markerで追跡する。
 
-候補：
+Group Markerのコメント形式は、次の行形式に固定する。
 
-* Layer Comment
-* Marker
-* 専用Effect
-* Layer ID相当の内部管理
+```text
+NGS_GROUP_CONTROL_V1
+groupId=<id>
+record=<layerId>,<originalParentId>
+```
 
-可能な限りレイヤー名には依存しない。
+`groupId`はGroup NullのLayer ID、`layerId`は対象LayerのLayer ID、`originalParentId`はApply前のParentのLayer IDとする。元Parentがない場合は`0`とする。Layer indexやレイヤー名を永続識別子にしない。
+
+`record`はGroup Controlが実際にGroup NullへParentした成功記録だけを持つ。再ApplyとUngroupでは、現在のParentがGroup Nullである記録だけをこのGroup Controlの所有として扱う。
+
+Group Null上の管理Markerだけを更新し、Layer Commentとユーザーが作成したMarkerは変更しない。
 
 ---
 
@@ -522,11 +598,13 @@ Group Controlがどのレイヤーを操作したか追跡できる仕組みを�
 
 `Ungroup` を押すと、Group Controlによって作成されたParent関係を解除する。
 
-対象レイヤーの見た目のPosition / Scale / Rotationが変わらないようにする。
+Group Markerが正しいことを確認した後、現在のParentが対象Group Nullである記録だけを解除する。元Parentが存在し、循環が発生しない場合は元Parentへ戻し、元Parentがない場合はParentなしへ戻す。
 
-Ungroup後はGroup Nullを削除する。
+ユーザーが元々設定していたParent、またはUngroup前に手動変更したParentは上書きしない。
 
-ユーザーが元々設定していたParent構造は可能な限り復元する。
+Ungroup後はGroup Nullを削除する。ただし、Group Markerにない直接子Layerが残っている場合は削除を中断する。Nested Group Nullを削除する場合は、外側GroupのGroup MarkerがそのParent関係を管理していることを確認し、確認できない場合は削除を中断する。
+
+Parent解除や元Parentへの復元に伴うワールドTransform補正、キーフレーム補正、キーフレームのベイク、Expressionの書き換えは行わない。Ungroupの見た目はAE標準のParent設定・解除の動作に従う。
 
 ---
 
@@ -534,10 +612,12 @@ Ungroup後はGroup Nullを削除する。
 
 すべての操作はAEのUndoに対応する。
 
+各ボタン操作は名前付きのUndo Groupを1つだけ作り、内部処理関数ではUndo Groupを開始しない。
+
 各ボタン操作は、
 
 ```javascript
-app.beginUndoGroup();
+app.beginUndoGroup("Undo Create Group");
 ```
 
 と
@@ -552,7 +632,8 @@ app.endUndoGroup();
 
 ```text
 Undo Create Group
-Undo Change Group Count
+Undo Change Group Count +
+Undo Change Group Count -
 Undo Apply Group
 Undo Ungroup
 ```
@@ -577,13 +658,21 @@ Group Nullを選択してください。
 
 ## 複数Group Null選択
 
-v1では最初のGroup Nullのみ処理するか、処理を中断する。
+処理を必ず中断する。
 
-推奨：
+表示するメッセージ：
 
 ```text
 Group Nullを1つだけ選択してください。
 ```
+
+## C++ Effect追加失敗
+
+作成したNullを残さず、Status Textへ失敗理由を表示する。
+
+## Group Marker不正
+
+Parent変更またはGroup Null削除を開始せず、Status Textへエラーを表示する。
 
 ## 不正なParent
 
@@ -617,6 +706,9 @@ Apply時のみParent構造を再計算する。
 * Collapse Transformations特殊対応
 * Track Matte専用処理
 * Expression参照の書き換え
+* ワールドTransform補正
+* キーフレーム補正
+* キーフレームのベイク
 
 ---
 
@@ -634,6 +726,14 @@ Apply時のみParent構造を再計算する。
 8. Ungroupできる
 9. Undoできる
 10. 不正なParent構造を作らない
+
+加えて、次を完成条件とする。
+
+* C++ EffectをWindows・macOSのAfter Effects 2024+へ導入できる
+* DockableなJSX PanelからC++ Effectを追加し、Group Nullを作成できる
+* Windowsの`.aex`とmacOSの`.plugin`成果物を提供できる
+* Windows・macOS双方で結合テストを実施し、結果を確認できる
+* Group Marker、Effect、Parent状態を保存・再起動後も確認できる
 
 ---
 
