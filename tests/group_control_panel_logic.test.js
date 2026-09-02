@@ -199,6 +199,7 @@ class FakeComp extends FakeCompItem {
     super();
     this.layersList = layers;
     this.frameDuration = 1 / 24;
+    this.onLayerAccess = null;
     for (const layer of layers) {
       layer.comp = this;
     }
@@ -213,6 +214,9 @@ class FakeComp extends FakeCompItem {
   }
 
   layer(index) {
+    if (this.onLayerAccess) {
+      this.onLayerAccess(index);
+    }
     return this.layersList[index - 1] || null;
   }
 
@@ -225,26 +229,104 @@ class FakeComp extends FakeCompItem {
   }
 }
 
-function loadPanel() {
+class FakeUIElement {
+  constructor(text) {
+    this.text = text || '';
+    this.enabled = true;
+    this.onClick = null;
+  }
+}
+
+class FakeUIContainer {
+  constructor() {
+    this.children = [];
+    this.layout = { resize() {} };
+  }
+
+  add(type, bounds, text) {
+    const child = type === 'group' ? new FakeUIContainer() : new FakeUIElement(text);
+    this.children.push(child);
+    return child;
+  }
+
+  center() {}
+
+  show() {}
+}
+
+class FakePanel extends FakeUIContainer {}
+
+class FakeWindow extends FakeUIContainer {}
+
+class FakeScheduler {
+  constructor() {
+    this.nextId = 1;
+    this.scheduleCalls = [];
+    this.cancelCalls = [];
+  }
+
+  scheduleTask(expression, delay, repeat) {
+    const task = {
+      id: this.nextId,
+      expression,
+      delay,
+      repeat,
+      canceled: false,
+      completed: false,
+    };
+    this.nextId += 1;
+    this.scheduleCalls.push(task);
+    return task.id;
+  }
+
+  cancelTask(taskId) {
+    this.cancelCalls.push(taskId);
+    const task = this.scheduleCalls.find((candidate) => candidate.id === taskId);
+    if (task) {
+      task.canceled = true;
+    }
+  }
+
+  runNext(sandbox) {
+    const task = this.scheduleCalls.find((candidate) => (
+      !candidate.canceled && !candidate.completed
+    ));
+
+    if (!task) {
+      return false;
+    }
+
+    task.completed = true;
+    if (task.expression === 'GroupControlEffectWatcherTick()') {
+      sandbox.GroupControlEffectWatcherTick();
+    }
+    return true;
+  }
+
+  pendingCount() {
+    return this.scheduleCalls.filter((task) => !task.canceled && !task.completed).length;
+  }
+}
+
+function loadPanel({ scheduler = null } = {}) {
   const panel = fs.readFileSync(path.join(rootDir, 'panel', 'GroupControl.jsx'), 'utf8')
     .replace(/#include\s+["']([^"']+)["']/g, (includeLine, includeName) => {
       const includePath = path.join(rootDir, 'panel', includeName);
       return fs.existsSync(includePath) ? fs.readFileSync(includePath, 'utf8') : '';
     })
     .replace(/var GroupControlPanel = buildUI\(this\);\s*$/, '');
+  const app = {
+    project: { activeItem: null },
+    scheduleTask: scheduler ? scheduler.scheduleTask.bind(scheduler) : () => 1,
+    cancelTask: scheduler ? scheduler.cancelTask.bind(scheduler) : () => {},
+  };
   const sandbox = {
     console,
     MarkerValue: FakeMarkerValue,
     CompItem: FakeCompItem,
-    Panel: function Panel() {},
-    Window: function Window() {},
-    app: {
-      project: { activeItem: null },
-      scheduleTask() {
-        return 1;
-      },
-      cancelTask() {},
-    },
+    Panel: FakePanel,
+    Window: FakeWindow,
+    app,
   };
   vm.runInNewContext(panel, sandbox, { filename: 'GroupControl.jsx' });
   return sandbox;
@@ -265,6 +347,12 @@ function markerComments(group) {
 
 function effectNamed(layer, name) {
   return layer.effects.items.find((effect) => effect.name === name) || null;
+}
+
+function addSourceEffect(group, name) {
+  const effect = group.effects.addProperty('ADBE Gaussian Blur 2');
+  effect.name = name;
+  return effect;
 }
 
 test('Apply attaches only roots, preserves internal parents, and counts external candidates', () => {
@@ -411,10 +499,14 @@ test('Nested Ungroup removes the nested record from the outer Group Marker', () 
 test('Ungroup removes Group Control-owned Effect copies but preserves a Child-local Effect', () => {
   const panel = loadPanel();
   const root = new FakeLayer(101, 'Root');
+  const unrelated = new FakeLayer(102, 'Unrelated');
   const localEffect = new FakeEffect('ADBE Gaussian Blur 2', 'Gaussian Blur');
   const ownedEffect = new FakeEffect('ADBE Gaussian Blur 2', '[GFX:100:2] Gaussian Blur');
+  const unrelatedOwnedEffect = new FakeEffect('ADBE Gaussian Blur 2', '[GFX:100:3] Gaussian Blur');
+  const unrelatedOtherGroupEffect = new FakeEffect('ADBE Gaussian Blur 2', '[GFX:999:2] Gaussian Blur');
   root.effects.items.push(localEffect, ownedEffect);
-  const { comp, group } = makeGroupFixture({ count: 1, extraLayers: [root] });
+  unrelated.effects.items.push(unrelatedOwnedEffect, unrelatedOtherGroupEffect);
+  const { comp, group } = makeGroupFixture({ count: 1, extraLayers: [root, unrelated] });
   group.marker.setValueAtTime(0, new FakeMarkerValue(
     'NGS_GROUP_CONTROL_V1\ngroupId=100\nrecord=101,0',
   ));
@@ -425,4 +517,120 @@ test('Ungroup removes Group Control-owned Effect copies but preserves a Child-lo
   assert.equal(result.ok, true);
   assert.equal(effectNamed(root, 'Gaussian Blur'), localEffect);
   assert.equal(effectNamed(root, '[GFX:100:2] Gaussian Blur'), null);
+  assert.equal(effectNamed(unrelated, '[GFX:100:3] Gaussian Blur'), null);
+  assert.equal(effectNamed(unrelated, '[GFX:999:2] Gaussian Blur'), unrelatedOtherGroupEffect);
+});
+
+test('Ungroup cleans owned Effects on the markerless empty-group early path', () => {
+  const panel = loadPanel();
+  const root = new FakeLayer(101, 'Root');
+  const localEffect = new FakeEffect('ADBE Gaussian Blur 2', 'Gaussian Blur');
+  const ownedEffect = new FakeEffect('ADBE Gaussian Blur 2', '[GFX:100:2] Gaussian Blur');
+  root.effects.items.push(localEffect, ownedEffect);
+  const { comp, group } = makeGroupFixture({ count: 0, extraLayers: [root] });
+
+  const result = panel.ungroupCore(group, comp);
+
+  assert.equal(result.ok, true);
+  assert.equal(effectNamed(root, 'Gaussian Blur'), localEffect);
+  assert.equal(effectNamed(root, '[GFX:100:2] Gaussian Blur'), null);
+  assert.equal(comp.layersList.includes(group), false);
+});
+
+test('buildUI starts one-shot watcher sync, reschedules after a Tick, and stops on close', () => {
+  const scheduler = new FakeScheduler();
+  const outside = new FakeLayer(200, 'Outside');
+  const root = new FakeLayer(101, 'Root');
+  const externalChild = new FakeLayer(102, 'External Child', { parent: outside });
+  const { comp, group } = makeGroupFixture({
+    count: 2,
+    extraLayers: [root, externalChild, outside],
+  });
+  addSourceEffect(group, 'Gaussian Blur');
+
+  const panel = loadPanel({ scheduler });
+  panel.app.project.activeItem = comp;
+  const ui = panel.buildUI({});
+
+  assert.equal(scheduler.scheduleCalls.length, 1);
+  assert.equal(scheduler.scheduleCalls[0].expression, 'GroupControlEffectWatcherTick()');
+  assert.equal(scheduler.scheduleCalls[0].delay, 200);
+  assert.equal(scheduler.scheduleCalls[0].repeat, false);
+  assert.notEqual(effectNamed(root, '[GFX:100:2] Gaussian Blur'), null);
+  assert.equal(effectNamed(externalChild, '[GFX:100:2] Gaussian Blur'), null);
+
+  addSourceEffect(group, 'Tint');
+  assert.equal(scheduler.runNext(panel), true);
+  assert.equal(scheduler.scheduleCalls.length, 2);
+  assert.notEqual(effectNamed(root, '[GFX:100:3] Tint'), null);
+  assert.equal(scheduler.pendingCount(), 1);
+
+  ui.onClose();
+  assert.deepEqual(scheduler.cancelCalls, [scheduler.scheduleCalls[1].id]);
+  assert.equal(scheduler.pendingCount(), 0);
+});
+
+test('active-comp watcher synchronizes every Group Null in the active composition', () => {
+  const scheduler = new FakeScheduler();
+  const firstGroup = new FakeLayer(100, '[G] First', { nullLayer: true });
+  const firstRoot = new FakeLayer(101, 'First Root');
+  const secondGroup = new FakeLayer(200, '[G] Second', { nullLayer: true });
+  const secondRoot = new FakeLayer(201, 'Second Root');
+  const comp = new FakeComp([firstGroup, firstRoot, secondGroup, secondRoot]);
+  firstGroup.effects.property(1).property(1).setValue(1);
+  secondGroup.effects.property(1).property(1).setValue(1);
+  addSourceEffect(firstGroup, 'Gaussian Blur');
+  addSourceEffect(secondGroup, 'Tint');
+
+  const panel = loadPanel({ scheduler });
+  panel.app.project.activeItem = comp;
+  panel.buildUI({});
+
+  assert.notEqual(effectNamed(firstRoot, '[GFX:100:2] Gaussian Blur'), null);
+  assert.notEqual(effectNamed(secondRoot, '[GFX:200:2] Tint'), null);
+});
+
+test('watcher start is idempotent and a reentrant Tick does not create a duplicate task', () => {
+  const scheduler = new FakeScheduler();
+  const root = new FakeLayer(101, 'Root');
+  const { comp } = makeGroupFixture({ count: 0, extraLayers: [root] });
+  const panel = loadPanel({ scheduler });
+
+  panel.startGroupEffectWatcher();
+  panel.startGroupEffectWatcher();
+  assert.equal(scheduler.scheduleCalls.length, 1);
+  assert.equal(scheduler.pendingCount(), 1);
+
+  let reentered = false;
+  comp.onLayerAccess = () => {
+    if (!reentered) {
+      reentered = true;
+      panel.GroupControlEffectWatcherTick();
+    }
+  };
+  panel.app.project.activeItem = comp;
+  assert.equal(scheduler.runNext(panel), true);
+  assert.equal(scheduler.scheduleCalls.length, 2);
+  assert.equal(scheduler.pendingCount(), 1);
+
+  panel.stopGroupEffectWatcher();
+  assert.deepEqual(scheduler.cancelCalls, [scheduler.scheduleCalls[1].id]);
+  assert.equal(scheduler.pendingCount(), 0);
+});
+
+test('watcher removes reserved copies whose Group Null was manually deleted', () => {
+  const scheduler = new FakeScheduler();
+  const root = new FakeLayer(101, 'Root');
+  const { comp, group } = makeGroupFixture({ count: 1, extraLayers: [root] });
+  addSourceEffect(group, 'Gaussian Blur');
+
+  const panel = loadPanel({ scheduler });
+  panel.app.project.activeItem = comp;
+  panel.GroupControlEffectWatcherStart();
+  assert.notEqual(effectNamed(root, '[GFX:100:2] Gaussian Blur'), null);
+
+  comp.removeLayer(group);
+  assert.equal(scheduler.runNext(panel), true);
+  assert.equal(effectNamed(root, '[GFX:100:2] Gaussian Blur'), null);
+  panel.GroupControlEffectWatcherStop();
 });

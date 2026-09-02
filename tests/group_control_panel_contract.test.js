@@ -29,6 +29,12 @@ test('Group Control panel exposes the ScriptUI and adapter contract', () => {
   assert.match(source, /function\s+applyGroup\s*\(/);
   assert.match(source, /function\s+ungroupCore\s*\(/);
   assert.match(source, /function\s+ungroup\s*\(/);
+  assert.match(source, /function\s+syncAllGroupEffects\s*\(/);
+  assert.match(source, /function\s+startGroupEffectWatcher\s*\(/);
+  assert.match(source, /function\s+stopGroupEffectWatcher\s*\(/);
+  assert.match(source, /function\s+GroupControlEffectWatcherStart\s*\(/);
+  assert.match(source, /function\s+GroupControlEffectWatcherStop\s*\(/);
+  assert.match(source, /function\s+GroupControlEffectWatcherTick\s*\(/);
 
   assert.match(source, /instanceof\s+Panel/);
   assert.match(source, /new\s+Window\s*\(\s*["']palette["']/);
@@ -42,8 +48,11 @@ test('Group Control panel exposes the ScriptUI and adapter contract', () => {
   assert.match(source, /ADBE Transform Group/);
   assert.match(source, /GroupControlCore\.clampLayerCount/);
   assert.match(source, /GroupControlEffectSync\.(?:syncGroupEffects|removeOwnedEffects)\s*\(/);
-  assert.match(source, /app\.scheduleTask\s*\(/);
-  assert.match(source, /200/);
+  assert.match(source, /GROUP_CONTROL_EFFECT_SYNC_INTERVAL_MS\s*=\s*200/);
+  assert.match(source, /app\.scheduleTask\s*\(\s*["']GroupControlEffectWatcherTick\(\)["']\s*,\s*GROUP_CONTROL_EFFECT_SYNC_INTERVAL_MS\s*,\s*false\s*\)/);
+  assert.match(source, /app\.cancelTask\s*\(/);
+  assert.match(source, /function\s+buildUI[\s\S]*GroupControlEffectWatcherStart\s*\(\)/);
+  assert.match(source, /panel\.onClose\s*=\s*function[\s\S]*GroupControlEffectWatcherStop\s*\(\)/);
 });
 
 test('Group Control panel keeps fixed safety messages and one undo group per action', () => {

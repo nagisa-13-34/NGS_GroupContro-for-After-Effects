@@ -317,7 +317,7 @@ test('structural diff handles Effect addition, rename, and deletion without dele
   tint.name = 'Tint Updated';
   effectSync.syncGroupEffects(group, [root, child]);
   assert.equal(
-    root.effects.property('[GFX:100:3] Tint Updated').property('Amount').expression,
+    root.effects.property('[GFX:100:3] Tint Updated').property('Tint Controls').property('Amount').expression,
     'thisComp.layer("[G] Group").effect("Tint Updated")("Tint Controls")("Amount")',
   );
 

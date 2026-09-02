@@ -36,6 +36,10 @@ var STATUS_UNGROUP_ROLLBACK_FAILED = "Ungroupを中断しました。変更を�
 var STATUS_UNGROUP_COMPLETE = "Ungroup完了。";
 
 var groupControlUI = null;
+var GROUP_CONTROL_EFFECT_SYNC_INTERVAL_MS = 200;
+var groupControlEffectWatcherActive = false;
+var groupControlEffectWatcherTaskId = null;
+var groupControlEffectWatcherTicking = false;
 
 function makeFailure(status) {
     return {
@@ -258,6 +262,236 @@ function getTargetLayers(group, comp) {
     }
 
     return layers;
+}
+
+function getAllCompLayers(comp) {
+    var layers = [];
+    var layerCount;
+    var index;
+    var layer;
+
+    if (comp === null || typeof comp === "undefined") {
+        return layers;
+    }
+
+    try {
+        layerCount = Number(comp.numLayers);
+    } catch (countError) {
+        layerCount = 0;
+    }
+
+    if (!isFinite(layerCount) || layerCount <= 0) {
+        return layers;
+    }
+
+    for (index = 1; index <= Math.floor(layerCount); index += 1) {
+        try {
+            layer = comp.layer(index);
+        } catch (layerError) {
+            layer = null;
+        }
+
+        if (layer !== null && typeof layer !== "undefined") {
+            layers.push(layer);
+        }
+    }
+
+    return layers;
+}
+
+function cleanupOrphanedGroupEffects(compLayers, liveGroupIds) {
+    var orphanGroupIds = {};
+    var index;
+    var effectIndex;
+    var layer;
+    var effects;
+    var effect;
+    var effectCount;
+    var reservedInfo;
+    var groupKey;
+
+    for (index = 0; index < compLayers.length; index += 1) {
+        layer = compLayers[index];
+        effects = getEffectsProperty(layer);
+        if (effects === null || typeof effects === "undefined") {
+            continue;
+        }
+
+        try {
+            effectCount = Number(effects.numProperties);
+        } catch (countError) {
+            effectCount = 0;
+        }
+
+        if (!isFinite(effectCount) || effectCount <= 0) {
+            continue;
+        }
+
+        for (effectIndex = 1; effectIndex <= Math.floor(effectCount); effectIndex += 1) {
+            try {
+                effect = effects.property(effectIndex);
+            } catch (effectError) {
+                effect = null;
+            }
+
+            if (effect === null || typeof effect === "undefined") {
+                continue;
+            }
+
+            try {
+                reservedInfo = GroupControlEffectSync.parseReservedEffectName(
+                    String(effect.name || ""));
+            } catch (parseError) {
+                reservedInfo = null;
+            }
+
+            if (reservedInfo === null ||
+                    liveGroupIds["id:" + reservedInfo.groupId]) {
+                continue;
+            }
+
+            groupKey = "id:" + reservedInfo.groupId;
+            orphanGroupIds[groupKey] = reservedInfo.groupId;
+        }
+    }
+
+    for (groupKey in orphanGroupIds) {
+        if (!Object.prototype.hasOwnProperty.call(orphanGroupIds, groupKey)) {
+            continue;
+        }
+
+        try {
+            GroupControlEffectSync.removeOwnedEffects(
+                compLayers, orphanGroupIds[groupKey]);
+        } catch (removeError) {
+            /* A single stale Layer must not stop the active-comp watcher. */
+        }
+    }
+}
+
+function syncAllGroupEffects(comp) {
+    var compLayers;
+    var groups = [];
+    var liveGroupIds = {};
+    var index;
+    var layer;
+    var groupId;
+    var targetLayers;
+
+    if (comp === null || typeof comp === "undefined") {
+        return;
+    }
+
+    compLayers = getAllCompLayers(comp);
+    for (index = 0; index < compLayers.length; index += 1) {
+        layer = compLayers[index];
+        if (!isGroupLayer(layer)) {
+            continue;
+        }
+
+        groupId = getLayerId(layer);
+        if (groupId <= 0) {
+            continue;
+        }
+
+        groups.push(layer);
+        liveGroupIds["id:" + groupId] = true;
+    }
+
+    for (index = 0; index < groups.length; index += 1) {
+        try {
+            targetLayers = getTargetLayers(groups[index], comp);
+            GroupControlEffectSync.syncGroupEffects(groups[index], targetLayers);
+        } catch (syncError) {
+            /* A single Group must not stop synchronization of other Groups. */
+        }
+    }
+
+    cleanupOrphanedGroupEffects(compLayers, liveGroupIds);
+}
+
+function scheduleGroupEffectWatcher() {
+    var taskId;
+
+    if (!groupControlEffectWatcherActive ||
+            groupControlEffectWatcherTaskId !== null) {
+        return;
+    }
+
+    if (typeof app === "undefined" || app === null ||
+            typeof app.scheduleTask !== "function") {
+        return;
+    }
+
+    try {
+        taskId = app.scheduleTask("GroupControlEffectWatcherTick()",
+            GROUP_CONTROL_EFFECT_SYNC_INTERVAL_MS, false);
+        if (taskId !== null && typeof taskId !== "undefined") {
+            groupControlEffectWatcherTaskId = taskId;
+        }
+    } catch (scheduleError) {
+        groupControlEffectWatcherTaskId = null;
+    }
+}
+
+function GroupControlEffectWatcherTick() {
+    var comp;
+
+    if (!groupControlEffectWatcherActive || groupControlEffectWatcherTicking) {
+        return;
+    }
+
+    /* The current scheduleTask invocation is one-shot and has now fired. */
+    groupControlEffectWatcherTaskId = null;
+    groupControlEffectWatcherTicking = true;
+
+    try {
+        comp = getActiveComp();
+        if (comp !== null) {
+            syncAllGroupEffects(comp);
+        }
+    } catch (watcherError) {
+        /* Keep the watcher alive when the active composition changes mid-tick. */
+    } finally {
+        groupControlEffectWatcherTicking = false;
+        scheduleGroupEffectWatcher();
+    }
+}
+
+function startGroupEffectWatcher() {
+    if (groupControlEffectWatcherActive) {
+        return;
+    }
+
+    groupControlEffectWatcherActive = true;
+    GroupControlEffectWatcherTick();
+}
+
+function stopGroupEffectWatcher() {
+    var taskId = groupControlEffectWatcherTaskId;
+
+    groupControlEffectWatcherActive = false;
+    groupControlEffectWatcherTaskId = null;
+
+    if (taskId === null || typeof taskId === "undefined" ||
+            typeof app === "undefined" || app === null ||
+            typeof app.cancelTask !== "function") {
+        return;
+    }
+
+    try {
+        app.cancelTask(taskId);
+    } catch (cancelError) {
+        /* A missing or already-completed task is safe to ignore. */
+    }
+}
+
+function GroupControlEffectWatcherStart() {
+    startGroupEffectWatcher();
+}
+
+function GroupControlEffectWatcherStop() {
+    stopGroupEffectWatcher();
 }
 
 function getLayerId(layer) {
@@ -1186,6 +1420,16 @@ function removeNestedRecordFromOuterMarker(outerGroup, outerValidation, nestedGr
         }));
 }
 
+function removeGroupOwnedEffectsFromComp(group, comp) {
+    var groupId = getLayerId(group);
+
+    if (groupId <= 0) {
+        return;
+    }
+
+    GroupControlEffectSync.removeOwnedEffects(getAllCompLayers(comp), groupId);
+}
+
 function ungroupCore(group, comp) {
     var markerValidation;
     var state;
@@ -1243,6 +1487,7 @@ function ungroupCore(group, comp) {
 
     if (state === null && directChildren.length === 0) {
         try {
+            removeGroupOwnedEffectsFromComp(group, comp);
             group.remove();
             return {
                 ok: true,
@@ -1303,6 +1548,7 @@ function ungroupCore(group, comp) {
             removeNestedRecordFromOuterMarker(outerGroup, outerValidation, getLayerId(group));
         }
 
+        removeGroupOwnedEffectsFromComp(group, comp);
         group.remove();
         groupRemoved = true;
         return {
@@ -1511,11 +1757,16 @@ function buildUI(thisObj) {
         refreshPanel();
     };
 
+    panel.onClose = function () {
+        GroupControlEffectWatcherStop();
+    };
+
     panel.onResizing = panel.onResize = function () {
         this.layout.resize();
     };
 
     refreshPanel();
+    GroupControlEffectWatcherStart();
 
     if (panel instanceof Window) {
         panel.center();
