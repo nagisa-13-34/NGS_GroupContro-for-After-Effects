@@ -112,3 +112,62 @@ Prompt.md unchanged: PASS
 * 今回は仕様書のみの変更であり、C++ Effectのビルド、JSX Panelの実装、After Effects 2024+上のWindows・macOS結合テストは未実施である。これらは後続タスクで検証する。
 * Gitが`Spec.md`のLFを次回操作時にCRLFへ変換するwarningを出している。`git diff --check`の終了コードは0で、内容上の空白エラーはない。
 * Group Marker、Layer ID、Effect matchNameの実ホスト上の保存・再起動後復元は、After Effects実環境での結合テストが必要である。
+
+## レビュー指摘への追記
+
+レビュー結果がNEEDS_FIXとなったため、`Spec.md`へ次の契約を追加した。
+
+* 管理Marker候補はGroup Null上の全Markerから、コメント先頭行が`NGS_GROUP_CONTROL`で始まるMarkerとして発見する。0件はApply時の新規作成を許可し、2件以上はApplyとUngroupを中断する。
+* 1件の管理Markerは、先頭行`NGS_GROUP_CONTROL_V1`、Group Null自身のLayer IDと一致する`groupId`、record行の構文、正の整数ID、重複Layer IDなし、Group自身IDなしを検証する。構文不正、ID不正、`groupId`不一致、重複、Group自身IDはParent変更またはGroup Null削除前に中断する。
+* 新規管理Markerは既存Markerのない時刻へ作成し、既存のユーザーMarker、Layer Comment、管理Marker以外のコメントと時刻を変更しない。固定Status文言を仕様書へ定義した。
+* Applyの順序を、Apply前検証、安全判定 / 候補、状態退避、旧所有Parent解除、再計算 / スキップ、成功記録Marker更新の順に固定した。
+* 予期せぬエラー時は、退避したParentと管理Markerを変更前へ戻し、Apply中に新規作成した管理Markerだけを削除する。復元失敗時のStatus文言も固定した。
+* Undo Groupは各操作で1つだけ作成し、`try/finally`の`finally`内で`app.endUndoGroup()`を一度だけ実行する契約にした。
+* Rootは影響Transform配下の有効Expressionが1つでもあればそのRootだけをスキップする。Group NullはPosition、Scale、Rotation、3D Orientation、3D X/Y/Z Rotationのいずれかにキーが1つでもあればApply全体を開始しない。
+* 非Expressionの通常キーフレームはキー補正なしでAE標準Parent動作を使う。外部Parent、Expression付きRoot、循環Parentのスキップは候補数を維持し、後続Layerで補充せず、固定形式のStatus Textへ件数を表示する。
+
+## レビュー指摘対応後の検証
+
+レビュー3点に対する17項目の仕様チェックを再実行した。
+
+```text
+PASS: 管理Marker候補の発見
+PASS: 0件の新規作成許可
+PASS: 2件以上のApply/Ungroup中断
+PASS: 先頭行とgroupId一致検証
+PASS: 構文/ID/重複/自己ID検証
+PASS: 不正時の変更前中断
+PASS: 空き時刻への新規Marker
+PASS: ユーザーMarker非破壊
+PASS: Marker固定Status文言
+PASS: Apply順序固定
+PASS: 予期せぬエラー時の復元
+PASS: Undo try/finally一度だけ
+PASS: Root有効Expressionスキップ
+PASS: Group Null 3Dキー全体中断
+PASS: キー中断の前処理禁止
+PASS: 非Expression keyframe標準Parent
+PASS: スキップ候補数維持/Status件数
+Summary: 17/17 passed
+```
+
+追加で次を確認した。
+
+```powershell
+git diff --check
+git diff --exit-code -- '.agents/Prompt.md'
+Write-Output 'Prompt.md unchanged: PASS'
+git status --short --untracked-files=all
+```
+
+出力：
+
+```text
+warning: in the working copy of '.agents/Spec.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of '.superpowers/sdd/2026-09-02-group-control/task-1-report.md', LF will be replaced by CRLF the next time Git touches it
+Prompt.md unchanged: PASS
+ M .agents/Spec.md
+ M .superpowers/sdd/2026-09-02-group-control/task-1-report.md
+```
+
+終了コードは0だった。Gitの改行変換warning以外の差分エラーはなく、Prompt.mdは未変更である。

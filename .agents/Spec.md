@@ -302,6 +302,25 @@ Group Nullのindex + 1
 
 外部Parent付きLayerや循環ParentになるLayerをスキップする場合でも、候補数には含める。後続Layerを繰り上げて候補数を補充しない。
 
+Applyの処理順序は次のとおり固定する。
+
+* Apply前検証：Active Comp、選択Group Null、C++ Effect、Layer Count、管理Markerを検証する。管理Markerの検証に失敗した場合はParent変更を開始しない
+* 安全判定 / 候補：最初にGroup NullのTransformキーを確認する。Group Nullに対象Transformのキーが1つでもある場合はApply全体を開始せず、それ以外の場合だけ現在のGroup NullのindexとLayer Countから候補範囲を取得する
+* 状態退避：候補Layerと管理Markerに記録されたLayerについて、現在のParentと更新前の管理Markerの有無、時刻、コメントを退避する
+* 旧所有Parent解除：退避した管理Markerのうち、現在のParentが対象Group NullであるGroup Control所有Parentだけを解除する。ユーザーが変更したParentは触らない
+* 再計算 / スキップ：旧所有Parent解除後にRoot Layerを再計算し、外部Parent付きLayer、循環ParentになるLayer、影響Transform配下に有効ExpressionがあるRootをスキップする。候補数は維持し、後続Layerで補充しない
+* 成功記録Marker更新：Group NullへParentできた成功記録だけを管理Markerへ反映する。既存の有効な管理Markerは更新し、0件なら空き時刻へ新規作成する
+
+予期せぬエラーが発生した場合は、退避したParentを変更前の状態へ戻し、管理Markerを更新前の有無、時刻、コメントへ戻す。Apply中に新規作成した管理Markerは削除する。ユーザーMarker、Layer Comment、ユーザー所有Parentは復元処理の対象にせず、変更しない。復元にも失敗した場合は、`Applyを中断しました。変更を完全には復元できませんでした。`をStatus Textへ表示する。
+
+Apply完了時のStatus Textは、次の形式に固定する。
+
+```text
+Apply完了: 候補数=<candidateCount>件 / 接続=<attachedCount>件 / 解除=<releasedCount>件 / 外部Parentスキップ=<externalParentSkipped>件 / Expression付きRootスキップ=<expressionSkipped>件 / 循環Parentスキップ=<cycleSkipped>件
+```
+
+外部Parent、Expression付きRoot、循環Parentのスキップ件数は候補数から差し引かず、後続Layerで補充しない。
+
 ---
 
 # 10. Parenting仕様
@@ -437,6 +456,8 @@ Group Nullによって制御するTransform：
 * Position
 * Scale
 * Rotation
+* 3D Orientation
+* 3D X Rotation / Y Rotation / Z Rotation
 
 AE標準Parent機能を使うため、追加Expressionは使用しない。
 
@@ -447,7 +468,11 @@ AE標準Parent機能を使うため、追加Expressionは使用しない。
 * キーフレームのベイク
 * Expressionの書き換え
 
-キーフレーム付きだがExpressionのないLayerは、キーを補正せずAE標準Parent動作で処理する。Expression付きRootとアニメーション中のGroup Nullは安全のためParent変更を行わず、Status Textへ理由を表示する。
+Root Layerの影響Transform配下に有効なExpressionが1つでもある場合、そのRootだけをスキップする。ここでいう影響Transform配下は、Position、Scale、Rotation、3D Orientation、3D X Rotation / Y Rotation / Z Rotationを指す。Expressionが無効、またはExpression文字列が空の場合は有効Expressionとみなさない。
+
+Group NullのPosition、Scale、Rotation、3D Orientation、3D X Rotation / Y Rotation / Z Rotationのいずれかにキーが1つでもある場合、Apply全体を開始しない。候補取得、状態退避、旧所有Parent解除、Marker更新も行わず、`Group NullのTransformにキーがあるためApplyを中断しました。`をStatus Textへ表示する。
+
+キーフレーム付きだがExpressionのない対象Layerは、キーを補正せずAE標準Parent動作で処理する。Expression付きRootのスキップ件数は候補数から差し引かず、後続Layerで補充せず、Apply完了Statusの`Expression付きRootスキップ`へ表示する。
 
 ---
 
@@ -570,27 +595,55 @@ Apply時には、Group Markerに記録された以前のParent関係を確認し
 
 以前のGroup Control所有Parentを解除した後、現在の候補範囲からRoot Layerを再計算する。成功したParent変更だけをGroup Markerへ記録する。
 
+この解除処理は、Apply前検証、安全判定 / 候補、状態退避が完了した後にだけ開始する。予期せぬエラー時は、状態退避で保存したParentと管理Markerを復元する。
+
 ユーザー自身が設定したParentを勝手に解除してはいけない。
 
 ---
 
-# 20. Group MarkerとParent所有権
+# 20. Group Markerの発見・検証・更新とParent所有権
 
-Group Controlがどのレイヤーを操作したかは、Group Null上の専用Group Markerで追跡する。
+Group Controlがどのレイヤーを操作したかは、Group Null上の専用Group Markerで追跡する。管理Markerの発見、検証、更新方法は次のとおり固定する。
 
-Group Markerのコメント形式は、次の行形式に固定する。
+## 発見
 
-```text
-NGS_GROUP_CONTROL_V1
-groupId=<id>
-record=<layerId>,<originalParentId>
-```
+* Group Null上の全Markerを調べ、コメントの先頭行が`NGS_GROUP_CONTROL`で始まるMarkerを管理Marker候補とする。これ以外のMarkerはユーザーMarkerとして扱う
+* 管理Marker候補が0件の場合、Applyでは新規作成を許可する。Ungroupでは管理対象なしとして扱い、他の削除条件を満たす場合だけGroup Nullを削除する
+* 管理Marker候補が2件以上ある場合は、内容を個別に検証せずApplyとUngroupを必ず中断する
 
-`groupId`はGroup NullのLayer ID、`layerId`は対象LayerのLayer ID、`originalParentId`はApply前のParentのLayer IDとする。元Parentがない場合は`0`とする。Layer indexやレイヤー名を永続識別子にしない。
+## 検証
 
-`record`はGroup Controlが実際にGroup NullへParentした成功記録だけを持つ。再ApplyとUngroupでは、現在のParentがGroup Nullである記録だけをこのGroup Controlの所有として扱う。
+管理Marker候補が1件の場合だけ、次をすべて検証する。
 
-Group Null上の管理Markerだけを更新し、Layer Commentとユーザーが作成したMarkerは変更しない。
+* コメントを改行で分割した先頭行が`NGS_GROUP_CONTROL_V1`と完全一致する
+* 2行目が`groupId=<id>`と完全一致し、`<id>`が現在のGroup NullのLayer IDと一致する
+* 3行目以降は`record=<layerId>,<originalParentId>`だけで構成し、空行や余計な行を許可しない
+* `groupId`と`layerId`は正の整数、`originalParentId`は`0`または正の整数である
+* `layerId`は同一Comp内のLayer IDとして解決でき、同じ`layerId`のrecordを重複させない
+* `record.layerId`と`originalParentId`の非ゼロ値に、現在のGroup Null自身のLayer IDを使用しない
+* Layer indexやレイヤー名を永続識別子に使用しない
+
+先頭行、`groupId`、構文、ID、重複、Group Null自身のIDのいずれかが不正な場合は、ApplyとUngroupをParent変更やGroup Null削除より前に中断する。
+
+## 更新
+
+* `record`はGroup Controlが実際にGroup NullへParentした成功記録だけを持つ
+* 既存の有効な管理Markerが1件ある場合は、そのMarkerの時刻を維持してコメントだけを更新する
+* 管理Markerが0件で新規作成する場合は、Group Null上に既存Markerがない時刻へ作成する。時刻`0`が使用中なら、`frameDuration`単位で後ろへ進み、最初に空いている時刻を使う
+* 管理Markerの更新時に、ユーザーMarker、Layer Comment、管理Marker以外のコメントや時刻を変更しない
+* 予期せぬエラーでApplyを中断した場合は、更新前の管理Markerの有無、時刻、コメントを復元し、新規作成した管理Markerだけを削除する。ユーザーMarkerは復元処理の対象にせず、変更もしない
+
+Status Textの文言は次のとおり固定する。
+
+* 管理Marker候補が2件以上の場合：`Group Markerが複数あるため処理を中断しました。`
+* 構文不正の場合：`Group Markerの構文が不正です。`
+* ID不正の場合：`Group MarkerのIDが不正です。`
+* `groupId`不一致の場合：`Group MarkerのgroupIdが一致しません。`
+* `layerId`重複の場合：`Group MarkerのLayer IDが重複しています。`
+* Group Null自身のIDがある場合：`Group MarkerにGroup Null自身のIDがあります。`
+* 管理Markerを新規作成した場合：`Group Markerを新規作成しました。`
+* Group NullにTransformキーがある場合：`Group NullのTransformにキーがあるためApplyを中断しました。`
+* Applyの復元にも失敗した場合：`Applyを中断しました。変更を完全には復元できませんでした。`
 
 ---
 
@@ -614,16 +667,15 @@ Parent解除や元Parentへの復元に伴うワールドTransform補正、キ�
 
 各ボタン操作は名前付きのUndo Groupを1つだけ作り、内部処理関数ではUndo Groupを開始しない。
 
-各ボタン操作は、
+各ボタン操作は、`try/finally`で処理を囲み、`app.endUndoGroup()`を`finally`内で一度だけ実行する。予期せぬエラーを処理してもUndo Groupを二重に閉じない。
 
 ```javascript
 app.beginUndoGroup("Undo Create Group");
-```
-
-と
-
-```javascript
-app.endUndoGroup();
+try {
+    // Create Group、Layer Count +/−、Apply、Ungroupの処理
+} finally {
+    app.endUndoGroup();
+}
 ```
 
 で囲む。
