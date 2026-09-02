@@ -171,3 +171,72 @@ Prompt.md unchanged: PASS
 ```
 
 終了コードは0だった。Gitの改行変換warning以外の差分エラーはなく、Prompt.mdは未変更である。
+
+## 再レビュー指摘への追記
+
+再レビューで残った2点に対応し、既存のレビュー済み契約を維持した。
+
+* Marker更新節に、`groupId`はGroup Nullの`Layer.id`、`layerId`は対象Layerの`Layer.id`、`originalParentId`はその対象LayerをGroup NullへParentする直前のParent Layerの`Layer.id`、Parentなしは`0`と明記した。Ungroupは`originalParentId`を復元先として使い、`0`はParentなし、存在して循環しないLayer IDはそのLayerへ復元、存在しない場合はParentなしとする契約へ接続した。
+* Apply成功Statusの集計行とプレースホルダー名を固定した。新規Marker作成を伴う成功時は`Group Markerを新規作成しました。`と集計行の2行、既存Marker更新時は集計行だけの1行とした。
+* Apply未適用時は固定理由行だけを表示し、成功集計行を表示しないことを明記した。予期せぬエラー後に復元できた場合と復元にも失敗した場合のStatusも固定した。
+
+## 再レビュー残項目対応後の検証
+
+Markerフィールドの意味、Ungroup復元先、Apply Statusの出力規則と、前回確認済みの契約を合わせて27項目を再検証した。
+
+```text
+PASS: groupIdはGroup NullのLayer.id
+PASS: layerIdは対象LayerのLayer.id
+PASS: originalParentIdはParent直前のLayer.id
+PASS: Parentなしは0
+PASS: Ungroup復元先がoriginalParentId
+PASS: Apply集計プレースホルダー固定
+PASS: 新規Marker成功は2行
+PASS: 既存Marker更新成功は集計1行
+PASS: 未適用は理由行のみ
+PASS: 失敗復元Status固定
+PASS: 管理Marker候補の発見
+PASS: 0件の新規作成許可
+PASS: 2件以上のApply/Ungroup中断
+PASS: 先頭行とgroupId一致検証
+PASS: 構文/ID/重複/自己ID検証
+PASS: 不正時の変更前中断
+PASS: 空き時刻への新規Marker
+PASS: ユーザーMarker非破壊
+PASS: Marker固定Status文言
+PASS: Apply順序固定
+PASS: 予期せぬエラー時の復元
+PASS: Undo try/finally一度だけ
+PASS: Root有効Expressionスキップ
+PASS: Group Null 3Dキー全体中断
+PASS: キー中断の前処理禁止
+PASS: 非Expression keyframe標準Parent
+PASS: スキップ候補数維持/Status件数
+Summary: 27/27 passed
+```
+
+差分とPrompt.mdの未変更も再確認した。
+
+```powershell
+git diff --check
+git diff --exit-code -- '.agents/Prompt.md'
+Write-Output 'Prompt.md unchanged: PASS'
+git diff --name-only
+git status --short --untracked-files=all
+```
+
+出力：
+
+```text
+warning: in the working copy of '.agents/Spec.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of '.superpowers/sdd/2026-09-02-group-control/task-1-report.md', LF will be replaced by CRLF the next time Git touches it
+Prompt.md unchanged: PASS
+.agents/Spec.md
+.superpowers/sdd/2026-09-02-group-control/task-1-report.md
+ M .agents/Spec.md
+ M .superpowers/sdd/2026-09-02-group-control/task-1-report.md
+```
+
+各コマンドの終了コードは0だった。Gitの改行変換warning以外の差分エラーはなく、変更対象はSpec.mdと本レポートだけである。
+
+実装上の未解決点はない。今回の作業は仕様書の契約更新だけであり、After Effects実機でのMarker API、Layer.idの保存・復元、Status Textの改行表示は後続実装時に確認する。

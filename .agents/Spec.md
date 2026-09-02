@@ -313,11 +313,34 @@ Applyの処理順序は次のとおり固定する。
 
 予期せぬエラーが発生した場合は、退避したParentを変更前の状態へ戻し、管理Markerを更新前の有無、時刻、コメントへ戻す。Apply中に新規作成した管理Markerは削除する。ユーザーMarker、Layer Comment、ユーザー所有Parentは復元処理の対象にせず、変更しない。復元にも失敗した場合は、`Applyを中断しました。変更を完全には復元できませんでした。`をStatus Textへ表示する。
 
-Apply完了時のStatus Textは、次の形式に固定する。
+Apply成功時のStatus Textは次のとおり固定する。集計行のプレースホルダー名は`candidateCount`、`attachedCount`、`releasedCount`、`externalParentSkipped`、`expressionSkipped`、`cycleSkipped`から変更しない。
+
+集計行：
 
 ```text
 Apply完了: 候補数=<candidateCount>件 / 接続=<attachedCount>件 / 解除=<releasedCount>件 / 外部Parentスキップ=<externalParentSkipped>件 / Expression付きRootスキップ=<expressionSkipped>件 / 循環Parentスキップ=<cycleSkipped>件
 ```
+
+管理Markerを新規作成した成功時は、上記の集計行に先行して次の行を出し、必ず2行にする。
+
+```text
+Group Markerを新規作成しました。
+Apply完了: 候補数=<candidateCount>件 / 接続=<attachedCount>件 / 解除=<releasedCount>件 / 外部Parentスキップ=<externalParentSkipped>件 / Expression付きRootスキップ=<expressionSkipped>件 / 循環Parentスキップ=<cycleSkipped>件
+```
+
+既存の有効な管理Markerを更新した成功時は、新規作成の行を出さず、集計行だけの1行にする。候補がすべてスキップされ接続数が0件の場合もApply成功として集計行を出し、管理Markerが0件なら新規作成の2行を出す。
+
+Apply前検証、安全判定、Marker検証、Group NullのTransformキー検出によりApplyを未適用とした場合は、該当する固定理由行だけを出し、`Apply完了`の集計行を出さない。予期せぬエラー後に変更を復元できた場合は`Applyを中断しました。変更を復元しました。`の1行、復元にも失敗した場合は`Applyを中断しました。変更を完全には復元できませんでした。`の1行を出す。
+
+Apply未適用時の固定理由行は次のとおりとする。
+
+* Active Compがない場合：`コンポジションを開いてください。`
+* Group Nullが選択されていない場合：`Group Nullを選択してください。`
+* 複数Group Nullが選択されている場合：`Group Nullを1つだけ選択してください。`
+* 管理Marker候補が2件以上、または管理Markerの構文、ID、重複、Group自身IDが不正な場合：Section 20で定義した該当するGroup Markerエラー文言
+* Group NullのTransformにキーがある場合：`Group NullのTransformにキーがあるためApplyを中断しました。`
+
+上記の未適用時は、固定理由行以外の成功文言や集計行を出さない。既存の有効な管理Markerを更新してApplyに成功した場合は、Marker更新専用の成功文言を追加せず、集計行だけを出す。
 
 外部Parent、Expression付きRoot、循環Parentのスキップ件数は候補数から差し引かず、後続Layerで補充しない。
 
@@ -627,6 +650,13 @@ Group Controlがどのレイヤーを操作したかは、Group Null上の専用
 
 ## 更新
 
+管理Markerの各値は、次の意味で記録する。
+
+* `groupId`はGroup Nullの`Layer.id`
+* `layerId`は対象Layerの`Layer.id`
+* `originalParentId`は、その対象LayerをGroup NullへParentする直前のParent Layerの`Layer.id`
+* Parentがない場合の`originalParentId`は`0`
+
 * `record`はGroup Controlが実際にGroup NullへParentした成功記録だけを持つ
 * 既存の有効な管理Markerが1件ある場合は、そのMarkerの時刻を維持してコメントだけを更新する
 * 管理Markerが0件で新規作成する場合は、Group Null上に既存Markerがない時刻へ作成する。時刻`0`が使用中なら、`frameDuration`単位で後ろへ進み、最初に空いている時刻を使う
@@ -641,8 +671,9 @@ Status Textの文言は次のとおり固定する。
 * `groupId`不一致の場合：`Group MarkerのgroupIdが一致しません。`
 * `layerId`重複の場合：`Group MarkerのLayer IDが重複しています。`
 * Group Null自身のIDがある場合：`Group MarkerにGroup Null自身のIDがあります。`
-* 管理Markerを新規作成した場合：`Group Markerを新規作成しました。`
+* Apply成功時に管理Markerを新規作成した場合の先頭行：`Group Markerを新規作成しました。`
 * Group NullにTransformキーがある場合：`Group NullのTransformにキーがあるためApplyを中断しました。`
+* Applyの変更を復元できた場合：`Applyを中断しました。変更を復元しました。`
 * Applyの復元にも失敗した場合：`Applyを中断しました。変更を完全には復元できませんでした。`
 
 ---
@@ -651,7 +682,7 @@ Status Textの文言は次のとおり固定する。
 
 `Ungroup` を押すと、Group Controlによって作成されたParent関係を解除する。
 
-Group Markerが正しいことを確認した後、現在のParentが対象Group Nullである記録だけを解除する。元Parentが存在し、循環が発生しない場合は元Parentへ戻し、元Parentがない場合はParentなしへ戻す。
+Group Markerが正しいことを確認した後、現在のParentが対象Group Nullである記録だけを解除する。Ungroupの復元先は各recordの`originalParentId`で決める。`originalParentId`が`0`ならParentなしへ戻し、0以外ならその`Layer.id`に一致するLayerが存在し循環が発生しない場合だけ、そのLayerへParentする。復元先Layerが存在しない場合はParentなしへ戻す。
 
 ユーザーが元々設定していたParent、またはUngroup前に手動変更したParentは上書きしない。
 
