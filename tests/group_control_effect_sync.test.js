@@ -43,9 +43,29 @@ class FakeProperty {
     this.value = value;
     this.items = children;
     this.canSetExpression = options.canSetExpression !== false;
-    this.expressionEnabled = false;
-    this.expression = '';
+    this._expressionEnabled = false;
+    this.expressionEnabledWrites = 0;
+    this._expression = '';
+    this.expressionWrites = 0;
     this.setValueCalls = 0;
+  }
+
+  get expressionEnabled() {
+    return this._expressionEnabled;
+  }
+
+  set expressionEnabled(value) {
+    this.expressionEnabledWrites += 1;
+    this._expressionEnabled = value;
+  }
+
+  get expression() {
+    return this._expression;
+  }
+
+  set expression(value) {
+    this.expressionWrites += 1;
+    this._expression = value;
   }
 
   get numProperties() {
@@ -79,9 +99,19 @@ class FakeProperty {
 class FakeEffect {
   constructor(matchName, name, properties = []) {
     this.matchName = matchName;
-    this.name = name || matchName;
+    this._name = name || matchName;
+    this.nameWrites = 0;
     this.items = properties;
     this.effects = null;
+  }
+
+  get name() {
+    return this._name;
+  }
+
+  set name(value) {
+    this.nameWrites += 1;
+    this._name = value;
   }
 
   get numProperties() {
@@ -328,6 +358,28 @@ test('structural diff handles Effect addition, rename, and deletion without dele
   assert.equal(ownedEffects(child, 100).length, 1);
   assert.equal(root.effects.items.includes(localEffect), true);
   assert.equal(root.effects.property('[GFX:100:2] Gaussian Blur'), null);
+});
+
+test('repeating an unchanged sync does not write mirrored Effect state again', () => {
+  const effectSync = loadEffectSync();
+  const { group, root, child } = makeFixture();
+
+  effectSync.syncGroupEffects(group, [root, child]);
+  const rootCopy = ownedEffects(root, 100)[0];
+  const terminal = rootCopy.property(1);
+  const writesAfterFirstSync = {
+    name: rootCopy.nameWrites,
+    expression: terminal.expressionWrites,
+    expressionEnabled: terminal.expressionEnabledWrites,
+  };
+
+  effectSync.syncGroupEffects(group, [root, child]);
+
+  assert.deepEqual({
+    name: rootCopy.nameWrites,
+    expression: terminal.expressionWrites,
+    expressionEnabled: terminal.expressionEnabledWrites,
+  }, writesAfterFirstSync);
 });
 
 test('Ungroup cleanup removes only Group Control-owned copies and preserves every unreserved child Effect', () => {

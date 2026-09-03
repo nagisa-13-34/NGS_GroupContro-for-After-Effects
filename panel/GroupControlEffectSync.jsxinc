@@ -817,7 +817,9 @@ var GroupControlEffectSync = (function () {
                 if (String(targetProperty.expression || "") !== expression) {
                     targetProperty.expression = expression;
                 }
-                targetProperty.expressionEnabled = true;
+                if (targetProperty.expressionEnabled !== true) {
+                    targetProperty.expressionEnabled = true;
+                }
                 linked = true;
             } catch (expressionError) {
                 linked = false;
@@ -882,7 +884,9 @@ var GroupControlEffectSync = (function () {
 
     function setEffectName(effect, name) {
         try {
-            effect.name = name;
+            if (String(effect.name || "") !== String(name)) {
+                effect.name = name;
+            }
         } catch (nameError) {
             /* A host failure must not stop other target Layers. */
         }
