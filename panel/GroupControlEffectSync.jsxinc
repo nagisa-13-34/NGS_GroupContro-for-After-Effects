@@ -511,6 +511,10 @@ var GroupControlEffectSync = (function () {
             return false;
         }
 
+        if (!containsLayer(targetLayers, layer)) {
+            return false;
+        }
+
         parent = getParent(layer);
         if (parent === null) {
             return true;

@@ -558,6 +558,7 @@ test('buildUI starts one-shot watcher sync, reschedules after a Tick, and stops 
   assert.equal(scheduler.scheduleCalls[0].repeat, false);
   assert.notEqual(effectNamed(root, '[GFX:100:2] Gaussian Blur'), null);
   assert.equal(effectNamed(externalChild, '[GFX:100:2] Gaussian Blur'), null);
+  assert.equal(effectNamed(outside, '[GFX:100:2] Gaussian Blur'), null);
 
   addSourceEffect(group, 'Tint');
   assert.equal(scheduler.runNext(panel), true);
