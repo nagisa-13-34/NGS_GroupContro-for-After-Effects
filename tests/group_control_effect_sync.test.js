@@ -9,10 +9,11 @@ const { test } = require('node:test');
 const repositoryRoot = path.resolve(__dirname, '..');
 const effectSyncPath = path.join(repositoryRoot, 'panel', 'GroupControlEffectSync.jsxinc');
 
-function loadEffectSync() {
+function loadEffectSync(extraSandbox = {}) {
   const source = fs.existsSync(effectSyncPath) ? fs.readFileSync(effectSyncPath, 'utf8') : '';
   const moduleObject = { exports: {} };
   const sandbox = {
+    ...extraSandbox,
     console,
     module: moduleObject,
     exports: moduleObject.exports,
@@ -43,6 +44,7 @@ class FakeProperty {
     this.value = value;
     this.items = children;
     this.canSetExpression = options.canSetExpression !== false;
+    this.propertyValueType = options.propertyValueType;
     this.metrics = options.metrics || null;
     this._expressionEnabled = false;
     this.expressionEnabledWrites = 0;
@@ -57,6 +59,12 @@ class FakeProperty {
 
   set expressionEnabled(value) {
     this.expressionEnabledWrites += 1;
+    if (this.metrics && typeof this.metrics.onPropertyWrite === 'function') {
+      this.metrics.onPropertyWrite();
+    }
+    if (this.metrics) {
+      this.metrics.propertyWrites += 1;
+    }
     this._expressionEnabled = value;
   }
 
@@ -66,6 +74,12 @@ class FakeProperty {
 
   set expression(value) {
     this.expressionWrites += 1;
+    if (this.metrics && typeof this.metrics.onPropertyWrite === 'function') {
+      this.metrics.onPropertyWrite();
+    }
+    if (this.metrics) {
+      this.metrics.propertyWrites += 1;
+    }
     this._expression = value;
   }
 
@@ -87,15 +101,105 @@ class FakeProperty {
   setValue(value) {
     this.value = value;
     this.setValueCalls += 1;
+    if (this.metrics && typeof this.metrics.onPropertyWrite === 'function') {
+      this.metrics.onPropertyWrite();
+    }
+    if (this.metrics) {
+      this.metrics.propertyWrites += 1;
+    }
   }
 
   clone() {
-    return new FakeProperty(
+    const copy = new FakeProperty(
       this.matchName,
       this.name,
       Array.isArray(this.value) ? this.value.slice() : this.value,
       this.items.map((item) => item.clone()),
-      { canSetExpression: this.canSetExpression, metrics: this.metrics },
+      {
+        canSetExpression: this.canSetExpression,
+        propertyValueType: this.propertyValueType,
+        metrics: this.metrics,
+      },
+    );
+    copy._expressionEnabled = this._expressionEnabled;
+    copy.expressionEnabledWrites = this.expressionEnabledWrites;
+    copy._expression = this._expression;
+    copy.expressionWrites = this.expressionWrites;
+    copy.setValueCalls = this.setValueCalls;
+    return copy;
+  }
+}
+
+class HostValueFailureProperty extends FakeProperty {
+  constructor(matchName, name, propertyValueType, options = {}) {
+    super(matchName, name, undefined, [], {
+      ...options,
+      propertyValueType,
+    });
+    this.valueReads = 0;
+    Object.defineProperty(this, 'value', {
+      configurable: true,
+      get: () => {
+        this.valueReads += 1;
+        throw new Error(`value getter must not run for ${propertyValueType}`);
+      },
+      set: () => {
+        throw new Error(`value setter must not run for ${propertyValueType}`);
+      },
+    });
+  }
+
+  clone() {
+    return new HostValueFailureProperty(
+      this.matchName,
+      this.name,
+      this.propertyValueType,
+      {
+        canSetExpression: this.canSetExpression,
+        metrics: this.metrics,
+      },
+    );
+  }
+}
+
+class CapabilityFailureProperty extends FakeProperty {
+  constructor(matchName, name, value, options = {}) {
+    super(matchName, name, value, [], options);
+    this.capabilityReads = 0;
+    Object.defineProperty(this, 'canSetExpression', {
+      configurable: true,
+      get: () => {
+        this.capabilityReads += 1;
+        throw new Error('canSetExpression getter unavailable');
+      },
+      set: () => {
+        throw new Error('canSetExpression setter unavailable');
+      },
+    });
+  }
+
+  clone() {
+    return new CapabilityFailureProperty(
+      this.matchName,
+      this.name,
+      this.value,
+      { propertyValueType: this.propertyValueType, metrics: this.metrics },
+    );
+  }
+}
+
+class MissingCapabilityProperty extends FakeProperty {
+  constructor(matchName, name, value, options = {}) {
+    super(matchName, name, value, [], options);
+    delete this.canSetExpression;
+  }
+
+  clone() {
+    return new MissingCapabilityProperty(
+      this.matchName,
+      this.name,
+      this.value,
+      { propertyValueType: this.propertyValueType, metrics: this.metrics },
     );
   }
 }
@@ -312,6 +416,79 @@ function makeFixture({ metrics = null } = {}) {
   };
 }
 
+function makeUnsupportedValueFixture() {
+  const sourceTemplates = makeEffectTemplates();
+  const targetTemplates = makeEffectTemplates();
+  const sourceProperties = [
+    new HostValueFailureProperty('NGS_NoValue-0001', 'No Value', 'NO_VALUE'),
+    new HostValueFailureProperty('NGS_CustomValue-0001', 'Custom Value', 'CUSTOM_VALUE'),
+  ];
+  const targetProperties = [
+    new FakeProperty('NGS_NoValue-0001', 'No Value', null, [], {
+      canSetExpression: false,
+      propertyValueType: 'NO_VALUE',
+    }),
+    new FakeProperty('NGS_CustomValue-0001', 'Custom Value', null, [], {
+      canSetExpression: false,
+      propertyValueType: 'CUSTOM_VALUE',
+    }),
+  ];
+
+  sourceTemplates.Unsupported = new FakeEffect('Unsupported', 'Unsupported', sourceProperties);
+  targetTemplates.Unsupported = new FakeEffect('Unsupported', 'Unsupported', targetProperties);
+
+  const group = new FakeLayer(100, '[G] Unsupported', sourceTemplates);
+  const root = new FakeLayer(101, 'Unsupported Root', targetTemplates);
+  group.effects.addProperty('NGS_GroupControl');
+  const source = group.effects.addProperty('Unsupported');
+  const comp = new FakeComp([group, root]);
+  return { comp, group, root, source };
+}
+
+function makeCapabilityFailureFixture() {
+  const sourceTemplates = makeEffectTemplates();
+  const targetTemplates = makeEffectTemplates();
+  sourceTemplates.CapabilityFailure = new FakeEffect(
+    'CapabilityFailure',
+    'Capability Failure',
+    [new FakeProperty('CapabilityFailure-0001', 'Value', 42)],
+  );
+  targetTemplates.CapabilityFailure = new FakeEffect(
+    'CapabilityFailure',
+    'Capability Failure',
+    [new CapabilityFailureProperty('CapabilityFailure-0001', 'Value', 0)],
+  );
+
+  const group = new FakeLayer(200, '[G] Capability Failure', sourceTemplates);
+  const root = new FakeLayer(201, 'Capability Root', targetTemplates);
+  group.effects.addProperty('NGS_GroupControl');
+  group.effects.addProperty('CapabilityFailure');
+  const comp = new FakeComp([group, root]);
+  return { comp, group, root };
+}
+
+function makeMissingCapabilityFixture() {
+  const sourceTemplates = makeEffectTemplates();
+  const targetTemplates = makeEffectTemplates();
+  sourceTemplates.MissingCapability = new FakeEffect(
+    'MissingCapability',
+    'Missing Capability',
+    [new FakeProperty('MissingCapability-0001', 'Value', 42)],
+  );
+  targetTemplates.MissingCapability = new FakeEffect(
+    'MissingCapability',
+    'Missing Capability',
+    [new MissingCapabilityProperty('MissingCapability-0001', 'Value', 0)],
+  );
+
+  const group = new FakeLayer(210, '[G] Missing Capability', sourceTemplates);
+  const root = new FakeLayer(211, 'Missing Capability Root', targetTemplates);
+  group.effects.addProperty('NGS_GroupControl');
+  group.effects.addProperty('MissingCapability');
+  const comp = new FakeComp([group, root]);
+  return { comp, group, root };
+}
+
 function makeMetrics() {
   return {
     layerAccesses: 0,
@@ -319,6 +496,8 @@ function makeMetrics() {
     addPropertyCalls: 0,
     removePropertyCalls: 0,
     terminalVisits: 0,
+    propertyWrites: 0,
+    onPropertyWrite: null,
   };
 }
 
@@ -367,6 +546,46 @@ function makeBasicSessionFixture({
   source.name = sourceName;
   const comp = new FakeComp([group, root], metrics);
   return { comp, group, root, source, templates };
+}
+
+function makeLargeIncrementalFixture({
+  metrics,
+  effectCount = 3,
+  propertiesPerEffect = 40,
+  invalidateEffectRefs = false,
+} = {}) {
+  const templates = makeEffectTemplates(metrics);
+  const sourceEffects = [];
+  for (let effectIndex = 0; effectIndex < effectCount; effectIndex += 1) {
+    const matchName = `NGS_Large_${effectIndex + 1}`;
+    const properties = Array.from({ length: propertiesPerEffect }, (_, propertyIndex) => (
+      new FakeProperty(
+        `${matchName}-${String(propertyIndex + 1).padStart(4, '0')}`,
+        `Parameter ${propertyIndex + 1}`,
+        propertyIndex + 1,
+        [],
+        { metrics },
+      )
+    ));
+    templates[matchName] = new FakeEffect(matchName, `Large ${effectIndex + 1}`, properties);
+    sourceEffects.push(matchName);
+  }
+
+  const group = new FakeLayer(300, '[G] Large', templates, {
+    metrics,
+    invalidateEffectRefs,
+  });
+  const root = new FakeLayer(301, 'Large Root', templates, {
+    metrics,
+    invalidateEffectRefs,
+  });
+  group.targetCount = 1;
+  group.effects.addProperty('NGS_GroupControl');
+  for (const matchName of sourceEffects) {
+    group.effects.addProperty(matchName);
+  }
+  const comp = new FakeComp([group, root], metrics);
+  return { comp, group, root, sourceEffects, templates };
 }
 
 function ownedEffects(layer, groupId) {
@@ -500,6 +719,95 @@ test('Effect expressions preserve string paths and render numeric property index
     effectSync.buildEffectExpressionPath('Group', 'Blur', ['Controls', 84, 'Amount', 2]),
     'thisComp.layer("Group").effect("Blur")("Controls")(84)("Amount")(2)',
   );
+});
+
+test('sync does not read NO_VALUE or CUSTOM_VALUE source values during static initialization', () => {
+  const effectSync = loadEffectSync();
+  const { group, root, source } = makeUnsupportedValueFixture();
+
+  effectSync.syncGroupEffects(group, [root]);
+
+  const copy = ownedEffects(root, group.id)[0];
+  assert.equal(source.property(1).valueReads, 0);
+  assert.equal(source.property(2).valueReads, 0);
+  assert.equal(copy.property(1).setValueCalls, 0);
+  assert.equal(copy.property(2).setValueCalls, 0);
+});
+
+test('sync recognizes numeric NO_VALUE enum values before reading source values', () => {
+  const effectSync = loadEffectSync({ PropertyValueType: { NO_VALUE: 41, CUSTOM_VALUE: 43 } });
+  const sourceTemplates = makeEffectTemplates();
+  const targetTemplates = makeEffectTemplates();
+  const sourceProperty = new HostValueFailureProperty('EnumNoValue-0001', 'No Value', 41);
+  const targetProperty = new FakeProperty('EnumNoValue-0001', 'No Value', null, [], {
+    canSetExpression: false,
+    propertyValueType: 41,
+  });
+  sourceTemplates.EnumUnsupported = new FakeEffect('EnumUnsupported', 'Enum Unsupported', [sourceProperty]);
+  targetTemplates.EnumUnsupported = new FakeEffect('EnumUnsupported', 'Enum Unsupported', [targetProperty]);
+  const group = new FakeLayer(400, '[G] Enum', sourceTemplates);
+  const root = new FakeLayer(401, 'Enum Root', targetTemplates);
+  group.effects.addProperty('NGS_GroupControl');
+  const source = group.effects.addProperty('EnumUnsupported');
+  const comp = new FakeComp([group, root]);
+
+  effectSync.syncGroupEffects(group, [root]);
+
+  assert.equal(source.property(1).valueReads, 0);
+  assert.equal(ownedEffects(root, group.id)[0].property(1).setValueCalls, 0);
+  assert.equal(comp.numLayers, 2);
+});
+
+test('sync skips a property when canSetExpression capability cannot be read', () => {
+  const effectSync = loadEffectSync();
+  const { group, root } = makeCapabilityFailureFixture();
+
+  effectSync.syncGroupEffects(group, [root]);
+
+  const property = ownedEffects(root, group.id)[0].property(1);
+  assert.equal(property.capabilityReads, 1);
+  assert.equal(property.expressionWrites, 0);
+  assert.equal(property.expressionEnabledWrites, 0);
+  assert.equal(property.setValueCalls, 0);
+});
+
+test('sync skips a property when canSetExpression capability is unavailable', () => {
+  const effectSync = loadEffectSync();
+  const { group, root } = makeMissingCapabilityFixture();
+
+  effectSync.syncGroupEffects(group, [root]);
+
+  const property = ownedEffects(root, group.id)[0].property(1);
+  assert.equal(property.expressionWrites, 0);
+  assert.equal(property.expressionEnabledWrites, 0);
+  assert.equal(property.setValueCalls, 0);
+});
+
+test('incremental sync skips generic value types without reading their source values', () => {
+  const effectSync = loadEffectSync();
+  const { comp, group, root, source } = makeUnsupportedValueFixture();
+  group.targetCount = 1;
+  const session = makeIncrementalSession(effectSync, [group], {
+    maxTargetLayers: 1,
+    maxPropertyOperations: 8,
+    maxEffectAdds: 1,
+    now: () => 0,
+  });
+
+  const converged = driveSession(
+    session,
+    comp,
+    'unsupported-project',
+    () => session.getStats().pending === false,
+    120,
+  );
+
+  assert.equal(converged, true);
+  assert.equal(source.property(1).valueReads, 0);
+  assert.equal(source.property(2).valueReads, 0);
+  const copy = ownedEffects(root, group.id)[0];
+  assert.equal(copy.property(1).setValueCalls, 0);
+  assert.equal(copy.property(2).setValueCalls, 0);
 });
 
 test('sync resolves renamed duplicate display names through the generated numeric source path', () => {
@@ -871,15 +1179,20 @@ test('incremental session caps real Layer access and addProperty work across man
   for (let tickIndex = 0; tickIndex < 220; tickIndex += 1) {
     const layerAccessesBefore = metrics.layerAccesses;
     const addsBefore = metrics.addPropertyCalls;
+    const writesBefore = metrics.propertyWrites;
     session.step(comp, { projectId: 'project-a' });
     const tick = session.getStats().lastTick;
     const layerAccessDelta = metrics.layerAccesses - layerAccessesBefore;
     const addPropertyDelta = metrics.addPropertyCalls - addsBefore;
+    const propertyWriteDelta = metrics.propertyWrites - writesBefore;
 
     assert.ok(layerAccessDelta <= 20, `Layer access budget exceeded: ${layerAccessDelta}`);
     assert.ok(addPropertyDelta <= 2, `addProperty budget exceeded: ${addPropertyDelta}`);
+    assert.ok(propertyWriteDelta <= 8, `Property write budget exceeded: ${propertyWriteDelta}`);
     assert.ok(tick.discoveryLayers <= 16);
     assert.ok(tick.targetLayers <= 2);
+    assert.ok(tick.propertyOperations <= 8);
+    assert.ok(tick.effectAddAttempts <= 1);
 
     if (
       firstTargets.every((layer) => ownedEffects(layer, 100).length === 1)
@@ -900,6 +1213,255 @@ test('incremental session caps real Layer access and addProperty work across man
     secondTargets.length,
   );
   assert.ok(metrics.layerAccesses < layers.length * 4);
+});
+
+test('incremental session bounds property work and Effect additions for one large target', () => {
+  const effectSync = loadEffectSync();
+  const metrics = makeMetrics();
+  const { comp, group, root, sourceEffects } = makeLargeIncrementalFixture({
+    metrics,
+    effectCount: 3,
+    propertiesPerEffect: 40,
+  });
+  metrics.addPropertyCalls = 0;
+  metrics.propertyWrites = 0;
+  const session = makeIncrementalSession(effectSync, [group], {
+    maxTargetLayers: 1,
+    maxPropertyOperations: 8,
+    maxEffectAdds: 1,
+    now: () => 0,
+  });
+
+  let converged = false;
+  for (let stepIndex = 0; stepIndex < 400; stepIndex += 1) {
+    const addsBefore = metrics.addPropertyCalls;
+    const writesBefore = metrics.propertyWrites;
+    const tick = session.step(comp, { projectId: 'large-project' });
+    const addDelta = metrics.addPropertyCalls - addsBefore;
+    const writeDelta = metrics.propertyWrites - writesBefore;
+
+    assert.ok(addDelta <= 1, `Effect additions exceeded step budget: ${addDelta}`);
+    assert.ok(writeDelta <= 8, `Property writes exceeded step budget: ${writeDelta}`);
+    assert.ok(tick.effectAddAttempts <= 1);
+    assert.ok(tick.propertyOperations <= 8);
+
+    if (
+      ownedEffects(root, group.id).length === sourceEffects.length
+      && ownedEffects(root, group.id).every((effect) => effect.property(1).expressionEnabled)
+      && session.getStats().pending === false
+    ) {
+      converged = true;
+      break;
+    }
+  }
+
+  assert.equal(converged, true);
+});
+
+test('incremental session yields after a single host write exceeds its time budget', () => {
+  const effectSync = loadEffectSync();
+  const metrics = makeMetrics();
+  let currentTime = 0;
+  metrics.onPropertyWrite = () => {
+    currentTime += 20;
+  };
+  const { comp, group, root } = makeBasicSessionFixture({ metrics, targetCount: 1 });
+  metrics.addPropertyCalls = 0;
+  metrics.propertyWrites = 0;
+  const session = makeIncrementalSession(effectSync, [group], {
+    maxTargetLayers: 1,
+    maxPropertyOperations: 8,
+    maxEffectAdds: 1,
+    timeBudgetMs: 12,
+    now: () => currentTime,
+  });
+
+  let converged = false;
+  for (let stepIndex = 0; stepIndex < 80; stepIndex += 1) {
+    const writesBefore = metrics.propertyWrites;
+    session.step(comp, { projectId: 'slow-project' });
+    const writeDelta = metrics.propertyWrites - writesBefore;
+    assert.ok(writeDelta <= 1, `A slow host write was followed by another write: ${writeDelta}`);
+
+    const copy = ownedEffects(root, group.id)[0];
+    if (copy && copy.property(1).expressionEnabled && session.getStats().pending === false) {
+      converged = true;
+      break;
+    }
+  }
+
+  assert.equal(converged, true);
+});
+
+test('incremental session cleans up an in-flight Effect when its target range disappears', () => {
+  const effectSync = loadEffectSync();
+  const metrics = makeMetrics();
+  let currentTime = 0;
+  const fixture = makeBasicSessionFixture({ metrics, targetCount: 1 });
+  const originalAddProperty = fixture.root.effects.addProperty.bind(fixture.root.effects);
+  fixture.root.effects.addProperty = (matchName) => {
+    const effect = originalAddProperty(matchName);
+    currentTime += 13;
+    return effect;
+  };
+  const session = makeIncrementalSession(effectSync, [fixture.group], {
+    timeBudgetMs: 12,
+    now: () => currentTime,
+  });
+
+  session.step(fixture.comp, { projectId: 'orphan-project' });
+  fixture.group.targetCount = 0;
+
+  for (let index = 0; index < 30; index += 1) {
+    session.step(fixture.comp, { projectId: 'orphan-project' });
+  }
+
+  assert.equal(ownedEffects(fixture.root, fixture.group.id).length, 0);
+  assert.equal(fixture.root.effects.items.length, 0);
+  assert.equal(session.getStats().pending, false);
+});
+
+test('incremental property work advances with a one-operation budget', () => {
+  const effectSync = loadEffectSync();
+  const fixture = makeBasicSessionFixture();
+  const session = makeIncrementalSession(effectSync, [fixture.group], {
+    maxPropertyOperations: 1,
+  });
+
+  for (let index = 0; index < 30; index += 1) {
+    session.step(fixture.comp, { projectId: 'one-property-operation' });
+  }
+
+  const copy = ownedEffects(fixture.root, fixture.group.id)[0];
+  assert.ok(copy);
+  assert.equal(
+    copy.property(1).expression,
+    'thisComp.layer("[G] 100").effect("Gaussian Blur")(1)',
+  );
+  assert.equal(copy.property(1).expressionEnabled, true);
+  assert.equal(session.getStats().pending, false);
+});
+
+test('incremental cleanup preserves the current owned Effect while removing obsolete copies', () => {
+  const effectSync = loadEffectSync();
+  const fixture = makeBasicSessionFixture();
+  const obsolete = fixture.root.effects.addProperty('ADBE Gaussian Blur 2');
+  obsolete.name = effectSync.makeReservedEffectName(100, 99, 'obsolete');
+  const current = fixture.root.effects.addProperty('ADBE Gaussian Blur 2');
+  current.name = effectSync.makeReservedEffectName(100, 2, 'Gaussian Blur');
+  const session = makeIncrementalSession(effectSync, [fixture.group]);
+
+  for (let index = 0; index < 15; index += 1) {
+    session.step(fixture.comp, { projectId: 'cleanup-cursor' });
+  }
+
+  assert.equal(fixture.root.effects.items.includes(obsolete), false);
+  assert.equal(fixture.root.effects.items.includes(current), true);
+  assert.equal(ownedEffects(fixture.root, fixture.group.id).length, 1);
+  assert.equal(session.getStats().totals.removedCount, 1);
+  assert.equal(session.getStats().pending, false);
+});
+
+test('incremental add and ownership naming remain a single operation when addProperty is slow', () => {
+  const effectSync = loadEffectSync();
+  let currentTime = 0;
+  const fixture = makeBasicSessionFixture();
+  const originalAddProperty = fixture.root.effects.addProperty.bind(fixture.root.effects);
+  fixture.root.effects.addProperty = (matchName) => {
+    const effect = originalAddProperty(matchName);
+    currentTime += 13;
+    return effect;
+  };
+  const session = makeIncrementalSession(effectSync, [fixture.group], {
+    timeBudgetMs: 12,
+    now: () => currentTime,
+  });
+
+  for (let index = 0; index < 10; index += 1) {
+    session.step(fixture.comp, { projectId: 'slow-add' });
+  }
+
+  assert.equal(fixture.root.effects.items.length, 1);
+  assert.equal(
+    fixture.root.effects.items[0].name,
+    effectSync.makeReservedEffectName(100, 2, 'Gaussian Blur'),
+  );
+  assert.equal(ownedEffects(fixture.root, fixture.group.id).length, 1);
+  assert.equal(session.getStats().pending, false);
+});
+
+test('incremental audit removes a copy after its target moves outside the Group', () => {
+  const effectSync = loadEffectSync();
+  const fixture = makeLargeIncrementalFixture({
+    effectCount: 1,
+    propertiesPerEffect: 240,
+  });
+  const session = makeIncrementalSession(effectSync, [fixture.group]);
+  let added = false;
+
+  for (let index = 0; index < 80; index += 1) {
+    session.step(fixture.comp, { projectId: 'parent-change' });
+    if (ownedEffects(fixture.root, fixture.group.id).length === 1) {
+      added = true;
+      break;
+    }
+  }
+
+  assert.equal(added, true);
+  fixture.root.parent = { id: 999, index: 999 };
+
+  for (let index = 0; index < 100; index += 1) {
+    session.step(fixture.comp, { projectId: 'parent-change' });
+  }
+
+  assert.equal(fixture.root.effects.items.length, 0);
+  assert.equal(ownedEffects(fixture.root, fixture.group.id).length, 0);
+  assert.equal(session.getStats().totals.createdCount, 1);
+  assert.equal(session.getStats().totals.removedCount, 1);
+  assert.equal(session.getStats().pending, false);
+});
+
+test('incremental property work reacquires target Effects after an in-flight collection mutation', () => {
+  const effectSync = loadEffectSync();
+  const metrics = makeMetrics();
+  const { comp, group, root, sourceEffects } = makeLargeIncrementalFixture({
+    metrics,
+    effectCount: 1,
+    propertiesPerEffect: 24,
+    invalidateEffectRefs: true,
+  });
+  metrics.addPropertyCalls = 0;
+  metrics.propertyWrites = 0;
+  const session = makeIncrementalSession(effectSync, [group], {
+    maxTargetLayers: 1,
+    maxPropertyOperations: 8,
+    maxEffectAdds: 1,
+    now: () => 0,
+  });
+
+  let observedInFlightWork = false;
+  for (let stepIndex = 0; stepIndex < 80; stepIndex += 1) {
+    session.step(comp, { projectId: 'mutation-project' });
+    if (ownedEffects(root, group.id).length === sourceEffects.length && session.getStats().pending) {
+      observedInFlightWork = true;
+      break;
+    }
+  }
+  assert.equal(observedInFlightWork, true);
+
+  const localEffect = root.effects.addProperty('ADBE Gaussian Blur 2');
+  const converged = driveSession(
+    session,
+    comp,
+    'mutation-project',
+    () => session.getStats().pending === false,
+    160,
+  );
+
+  assert.equal(converged, true);
+  assert.equal(ownedEffects(root, group.id).length, 1);
+  assert.equal(root.effects.items.includes(localEffect), true);
+  assert.equal(ownedEffects(root, group.id)[0].property(1).expressionEnabled, true);
 });
 
 test('sync reacquires indexed Effect entries after addProperty invalidates prior references', () => {

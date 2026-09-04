@@ -424,7 +424,6 @@ var GroupControlEffectSync = (function () {
             }
 
             records.push({
-                effect: effect,
                 effectIndex: index,
                 matchName: matchName,
                 sourceName: sourceName
@@ -797,8 +796,55 @@ var GroupControlEffectSync = (function () {
         return clone;
     }
 
+    function isStaticValueCopyable(property) {
+        var valueType;
+        var typeName;
+
+        if (property === null || typeof property === "undefined") {
+            return false;
+        }
+
+        try {
+            valueType = property.propertyValueType;
+        } catch (valueTypeError) {
+            return false;
+        }
+
+        if (valueType === null || typeof valueType === "undefined") {
+            return true;
+        }
+
+        try {
+            typeName = String(valueType).toUpperCase();
+        } catch (typeNameError) {
+            typeName = "";
+        }
+
+        if (typeName === "NO_VALUE" || typeName === "CUSTOM_VALUE" ||
+                /(?:^|\.)NO_VALUE$/.test(typeName) ||
+                /(?:^|\.)CUSTOM_VALUE$/.test(typeName)) {
+            return false;
+        }
+
+        try {
+            if (typeof PropertyValueType !== "undefined" &&
+                    (valueType === PropertyValueType.NO_VALUE ||
+                    valueType === PropertyValueType.CUSTOM_VALUE)) {
+                return false;
+            }
+        } catch (propertyValueTypeError) {
+            /* Keep the compatibility fallback when host enums are absent. */
+        }
+
+        return true;
+    }
+
     function copyStaticValue(sourceProperty, targetProperty) {
         var value;
+
+        if (!isStaticValueCopyable(sourceProperty)) {
+            return false;
+        }
 
         try {
             value = cloneValue(sourceProperty.value);
@@ -822,14 +868,22 @@ var GroupControlEffectSync = (function () {
 
     function setTerminalLink(sourceProperty, targetProperty, layerName,
             effectName, propertyPath, initializeStatic) {
-        var canSetExpression = true;
+        var canSetExpression = false;
+        var capabilityValue;
+        var capabilityKnown = true;
         var expression;
         var linked = false;
 
         try {
-            canSetExpression = targetProperty.canSetExpression !== false;
+            capabilityValue = targetProperty.canSetExpression;
+            capabilityKnown = capabilityValue === true || capabilityValue === false;
+            canSetExpression = capabilityValue === true;
         } catch (capabilityError) {
-            canSetExpression = true;
+            capabilityKnown = false;
+        }
+
+        if (!capabilityKnown) {
+            return false;
         }
 
         if (canSetExpression) {
@@ -902,13 +956,18 @@ var GroupControlEffectSync = (function () {
     }
 
     function setEffectName(effect, name) {
+        var changed = false;
+
         try {
             if (String(effect.name || "") !== String(name)) {
                 effect.name = name;
+                changed = true;
             }
         } catch (nameError) {
             /* A host failure must not stop other target Layers. */
         }
+
+        return changed;
     }
 
     function syncTargetEffects(group, groupId, targetLayers, layer, records, stats) {
@@ -1058,8 +1117,8 @@ var GroupControlEffectSync = (function () {
     }
 
     /* The idle watcher never calls syncGroupEffects: it discovers a bounded
-     * slice, then visits individual current targets and cleanup Layers.
-     * All cursors and fingerprints belong to one comp/project session. */
+     * slice, then visits current target Layers and individual Properties.
+     * Persistent state contains only indexes, paths, and signatures. */
     function createIncrementalSession(options) {
         var settings = options || {};
         var clockNow = settings.now || function () { return new Date().getTime(); };
@@ -1069,6 +1128,9 @@ var GroupControlEffectSync = (function () {
         var discoveryIndex = 1;
         var cleanupIndex = 1;
         var cleanupRemaining = 0;
+        var cleanupLayerIndex = 0;
+        var cleanupLayerId = 0;
+        var cleanupEffectIndex = 0;
         var generation = 1;
         var discovered = false;
         var discoveryInProgress = true;
@@ -1086,10 +1148,17 @@ var GroupControlEffectSync = (function () {
             return isFinite(value) && value > 0 ? Math.max(1, Math.floor(value)) : fallback;
         }
 
+        function limitBudget(value, fallback) {
+            value = Number(value);
+            return isFinite(value) && value >= 0 ? Math.floor(value) : fallback;
+        }
+
         function emptyStats() {
             return {discoveryLayers: 0, targetLayers: 0, terminalVisits: 0,
-                terminalCount: 0, createdCount: 0, removedCount: 0,
-                skippedTargets: 0, errors: 0, pending: false};
+                terminalCount: 0, propertyOperations: 0, propertyWrites: 0,
+                effectAddAttempts: 0, effectAdds: 0, createdCount: 0, removedCount: 0,
+                skippedTargets: 0, errors: 0, pending: false, yielded: false,
+                yieldReason: "", elapsedMs: 0};
         }
 
         function reset() {
@@ -1099,6 +1168,9 @@ var GroupControlEffectSync = (function () {
             discoveryIndex = 1;
             cleanupIndex = 1;
             cleanupRemaining = 0;
+            cleanupLayerIndex = 0;
+            cleanupLayerId = 0;
+            cleanupEffectIndex = 0;
             generation = 1;
             discovered = false;
             discoveryInProgress = true;
@@ -1113,23 +1185,57 @@ var GroupControlEffectSync = (function () {
             totals.ticks = 0;
         }
 
+        function nowValue() {
+            var value;
+
+            try { value = Number(clockNow()); } catch (clockError) { value = 0; }
+            return isFinite(value) ? value : 0;
+        }
+
         function readLayer(index) {
-            if (index < 1 || index > layerCount) { return null; }
-            try { return activeComp.layer(index); } catch (error) { return null; }
+            if (index < 1 || index > layerCount || activeComp === null ||
+                    typeof activeComp === "undefined") { return null; }
+            try { return activeComp.layer(index); } catch (layerError) { return null; }
+        }
+
+        function layerName(layer) {
+            try { return String(layer.name || ""); } catch (nameError) { return ""; }
+        }
+
+        function resolveGroupLayer(entry) {
+            var layer;
+
+            if (entry === null || typeof entry === "undefined") { return null; }
+            layer = readLayer(entry.layerIndex);
+            return getLayerId(layer) === entry.id ? layer : null;
         }
 
         function isLiveGroup(entry) {
-            try {
-                return entry && getContainingComp(entry.layer) === activeComp &&
-                    settings.isGroupLayer(entry.layer);
-            } catch (error) { return false; }
+            var layer = resolveGroupLayer(entry);
+
+            if (layer === null || typeof layer === "undefined") { return false; }
+            try { return settings.isGroupLayer(layer) === true; } catch (groupError) { return false; }
         }
 
-        function currentRange(entry) {
-            var range = settings.getTargetRange(entry.layer, activeComp);
-            var start = Math.max(Number(entry.layer.index) + 1, Number(range.startIndex));
-            var end = Math.min(layerCount, Number(range.endIndex));
-            if (!isFinite(start) || !isFinite(end)) { return {startIndex: 1, endIndex: 0}; }
+        function currentRange(entry, currentGroup) {
+            var group = currentGroup || resolveGroupLayer(entry);
+            var range;
+            var start;
+            var end;
+
+            if (group === null || typeof group === "undefined") {
+                return {startIndex: 1, endIndex: 0};
+            }
+            try {
+                range = settings.getTargetRange(group, activeComp) || {};
+                start = Math.max(Number(group.index) + 1, Number(range.startIndex));
+                end = Math.min(layerCount, Number(range.endIndex));
+            } catch (rangeError) {
+                return {startIndex: 1, endIndex: 0};
+            }
+            if (!isFinite(start) || !isFinite(end)) {
+                return {startIndex: 1, endIndex: 0};
+            }
             return {startIndex: Math.max(1, Math.floor(start)), endIndex: Math.floor(end)};
         }
 
@@ -1138,7 +1244,7 @@ var GroupControlEffectSync = (function () {
                 try {
                     return getContainingComp(layer) === activeComp &&
                         layer.index >= range.startIndex && layer.index <= range.endIndex;
-                } catch (error) { return false; }
+                } catch (membershipError) { return false; }
             }};
         }
 
@@ -1149,11 +1255,12 @@ var GroupControlEffectSync = (function () {
 
         function shallowSignature(layer, records) {
             var parade = getEffectsProperty(layer);
-            var parts = [token(layer.name)];
+            var parts = [token(layerName(layer))];
             var count = records ? records.length : getCollectionCount(parade);
             var index;
             var effect;
             var record;
+
             for (index = 0; index < count; index += 1) {
                 record = records ? records[index] : null;
                 effect = getCollectionItem(parade, record ? record.effectIndex : index + 1);
@@ -1165,11 +1272,25 @@ var GroupControlEffectSync = (function () {
             return parts.join("|");
         }
 
+        function resetEntryTargets(entry, range, sourceKey) {
+            entry.rangeKey = range.startIndex + ":" + range.endIndex;
+            entry.sourceKey = sourceKey;
+            entry.cursor = range.startIndex;
+            entry.remaining = Math.max(0, range.endIndex - range.startIndex + 1);
+            entry.cache = {};
+            entry.targetWork = null;
+            cleanupRemaining = layerCount;
+            cleanupLayerIndex = 0;
+            cleanupLayerId = 0;
+            cleanupEffectIndex = 0;
+        }
+
         function discoverOne(stats) {
             var layer = readLayer(discoveryIndex);
             var id;
             var entry;
             var index;
+
             stats.discoveryLayers += 1;
             try {
                 if (layer && settings.isGroupLayer(layer)) {
@@ -1177,31 +1298,44 @@ var GroupControlEffectSync = (function () {
                     if (id > 0) {
                         entry = byId[getGroupKey(id)];
                         if (!entry) {
-                            entry = {id: id, layer: layer, seen: generation, cursor: 0,
-                                rangeKey: "", sourceKey: "", remaining: 0, cache: {}};
+                            entry = {id: id, layerIndex: discoveryIndex, seen: generation,
+                                missed: 0, cursor: 0, rangeKey: "", sourceKey: "",
+                                remaining: 0, cache: {}, targetWork: null};
                             byId[getGroupKey(id)] = entry;
                             groups.push(entry);
                             cleanupRemaining = layerCount;
+                        } else if (entry.layerIndex !== discoveryIndex) {
+                            entry.layerIndex = discoveryIndex;
+                            entry.rangeKey = "";
+                            entry.sourceKey = "";
+                            entry.cursor = 0;
+                            entry.remaining = 0;
+                            entry.cache = {};
+                            entry.targetWork = null;
                         }
-                        entry.layer = layer;
+                        entry.layerIndex = discoveryIndex;
                         entry.seen = generation;
+                        entry.missed = 0;
                     }
                 }
-            } catch (error) { stats.errors += 1; }
+            } catch (discoverError) { stats.errors += 1; }
             discoveryIndex += 1;
             if (discoveryIndex > layerCount) {
                 for (index = groups.length - 1; index >= 0; index -= 1) {
                     entry = groups[index];
                     if (entry.seen !== generation) {
-                        if (isLiveGroup(entry)) {
-                            // A live Group may have moved into an index that
-                            // this generation already scanned. Keep its entry
-                            // and let targetOne refresh the current range.
+                        if (resolveGroupLayer(entry) !== null) {
                             entry.seen = generation;
                         } else {
-                            delete byId[getGroupKey(entry.id)];
-                            groups.splice(index, 1);
-                            cleanupRemaining = layerCount;
+                            entry.missed += 1;
+                            entry.seen = generation;
+                            entry.targetWork = null;
+                            entry.cache = {};
+                            if (entry.missed > 1) {
+                                delete byId[getGroupKey(entry.id)];
+                                groups.splice(index, 1);
+                                cleanupRemaining = layerCount;
+                            }
                         }
                     }
                 }
@@ -1209,99 +1343,693 @@ var GroupControlEffectSync = (function () {
                 discoveryIndex = 1;
                 discovered = true;
                 discoveryInProgress = false;
-                nextDiscoveryAt = clockNow() + limit(settings.discoveryIntervalMs, 1000);
+                nextDiscoveryAt = nowValue() + limit(settings.discoveryIntervalMs, 1000);
             }
         }
 
-        function cleanupOne(stats) {
-            var layer = readLayer(cleanupIndex);
+        function markYield(budget, reason) {
+            if (!budget.yielded) {
+                budget.yielded = true;
+                budget.yieldReason = reason;
+            }
+        }
+
+        function canUseHost(budget) {
+            if (budget.yielded) { return false; }
+            if (nowValue() - budget.started >= budget.timeLimit) {
+                markYield(budget, "timeBudgetMs");
+                return false;
+            }
+            return true;
+        }
+
+        function consumePropertyOperation(stats, budget) {
+            if (!canUseHost(budget)) { return false; }
+            if (budget.propertyOperations >= budget.maxPropertyOperations) {
+                markYield(budget, "maxPropertyOperations");
+                return false;
+            }
+            budget.propertyOperations += 1;
+            stats.propertyOperations += 1;
+            return true;
+        }
+
+        function consumeEffectAdd(stats, budget) {
+            if (!canUseHost(budget)) { return false; }
+            if (budget.effectAddAttempts >= budget.maxEffectAdds) {
+                markYield(budget, "maxEffectAdds");
+                return false;
+            }
+            budget.effectAddAttempts += 1;
+            stats.effectAddAttempts += 1;
+            stats.effectAdds += 1;
+            return true;
+        }
+
+        function removeOneOwned(effects, groupId, keepMap, preservedMap) {
+            var count = getCollectionCount(effects);
+            var index;
+            var effect;
+            var info;
+            var key;
+
+            for (index = count; index >= 1; index -= 1) {
+                effect = getCollectionItem(effects, index);
+                info = getReservedInfo(effect);
+                if (info === null || info.groupId !== groupId) { continue; }
+                key = String(info.effectIndex);
+                if (keepMap !== null && typeof keepMap !== "undefined" &&
+                        hasOwn(keepMap, key) && !hasOwn(preservedMap, key)) {
+                    preservedMap[key] = true;
+                    continue;
+                }
+                if (removeEffect(effects, effect)) { return true; }
+            }
+            return false;
+        }
+
+        function cleanupOne(stats, budget) {
+            var layerIndex;
+            var layer;
+            var layerId;
             var parade;
+            var count;
+            var index;
             var effect;
             var info;
             var entry;
-            var index;
             var remove;
-            cleanupIndex = cleanupIndex >= layerCount ? 1 : cleanupIndex + 1;
-            if (!discovered || !layer) { return; }
+
+            if (!discovered || layerCount <= 0 || !canUseHost(budget)) { return; }
+            layerIndex = cleanupLayerId > 0 ? cleanupLayerIndex : cleanupIndex;
+            layer = readLayer(layerIndex);
+            if (layer === null || typeof layer === "undefined") {
+                cleanupLayerId = 0;
+                cleanupIndex = layerIndex >= layerCount ? 1 : layerIndex + 1;
+                cleanupRemaining = Math.max(0, cleanupRemaining - 1);
+                return;
+            }
+            layerId = getLayerId(layer);
             parade = getEffectsProperty(layer);
-            for (index = getCollectionCount(parade); index >= 1; index -= 1) {
+            if (cleanupLayerId !== layerId || cleanupLayerIndex !== layerIndex) {
+                cleanupLayerId = layerId;
+                cleanupLayerIndex = layerIndex;
+                cleanupEffectIndex = getCollectionCount(parade);
+            }
+            count = getCollectionCount(parade);
+            index = Math.min(cleanupEffectIndex, count);
+            for (; index >= 1; index -= 1) {
+                if (!canUseHost(budget)) {
+                    cleanupEffectIndex = index;
+                    return;
+                }
                 effect = getCollectionItem(parade, index);
                 info = getReservedInfo(effect);
-                if (!info) { continue; }
+                if (info === null) { continue; }
                 entry = byId[getGroupKey(info.groupId)];
-                remove = !isLiveGroup(entry);
+                remove = entry === null || typeof entry === "undefined";
                 if (!remove) {
-                    remove = !isEligibleTarget(entry.layer, membership(currentRange(entry)), layer);
+                    /* A Group may have moved since discovery. Keep its copy
+                     * until the index-only entry is revalidated. */
+                    if (resolveGroupLayer(entry) === null) {
+                        continue;
+                    }
+                    remove = !isEligibleTarget(resolveGroupLayer(entry),
+                        membership(currentRange(entry)), layer);
                 }
                 if (remove && removeEffect(parade, effect)) {
                     stats.removedCount += 1;
-                    parade = getEffectsProperty(layer);
+                    cleanupEffectIndex = index;
+                    return;
                 }
             }
+            cleanupLayerId = 0;
+            cleanupLayerIndex = 0;
+            cleanupEffectIndex = 0;
+            cleanupIndex = layerIndex >= layerCount ? 1 : layerIndex + 1;
             cleanupRemaining = Math.max(0, cleanupRemaining - 1);
         }
 
-        function targetOne(stats, time) {
+        function makePropertyJob(record, sourceKey, initializeStatic) {
+            return {effectIndex: record.effectIndex, matchName: record.matchName,
+                sourceName: record.sourceName, sourceKey: sourceKey,
+                initializeStatic: initializeStatic, stack: [{path: [], nextIndex: 1}],
+                activePath: null, activeStage: null, expression: "", staticValue: null};
+        }
+
+        function resolveEffectPair(group, layer, groupId, job) {
+            var sourceEffect = getCollectionItem(getEffectsProperty(group), job.effectIndex);
+            var targetEffect = findOwnedEffect(getEffectsProperty(layer), groupId, job.effectIndex);
+
+            if (sourceEffect === null || typeof sourceEffect === "undefined" ||
+                    targetEffect === null || typeof targetEffect === "undefined" ||
+                    getEffectMatchName(targetEffect) !== job.matchName) {
+                return null;
+            }
+            return {source: sourceEffect, target: targetEffect};
+        }
+
+        function resolvePropertyPair(sourceEffect, targetEffect, path) {
+            var source = sourceEffect;
+            var target = targetEffect;
+            var sourceChild;
+            var targetChild;
+            var index;
+
+            for (index = 0; index < path.length; index += 1) {
+                sourceChild = getCollectionItem(source, path[index]);
+                targetChild = getPropertyChild(target, sourceChild, path[index]);
+                if (sourceChild === null || typeof sourceChild === "undefined" ||
+                        targetChild === null || typeof targetChild === "undefined") {
+                    return null;
+                }
+                source = sourceChild;
+                target = targetChild;
+            }
+            return {source: source, target: target};
+        }
+
+        function nextTerminalPath(job, sourceEffect, targetEffect, stats, budget) {
+            var frame;
+            var pair;
+            var count;
+            var index;
+            var sourceProperty;
+            var targetProperty;
+            var childCount;
+
+            while (job.stack.length > 0) {
+                frame = job.stack[job.stack.length - 1];
+                pair = resolvePropertyPair(sourceEffect, targetEffect, frame.path);
+                if (pair === null) {
+                    job.stack.pop();
+                    continue;
+                }
+                count = getCollectionCount(pair.source);
+                if (frame.nextIndex > count) {
+                    job.stack.pop();
+                    continue;
+                }
+                index = frame.nextIndex;
+                sourceProperty = getCollectionItem(pair.source, index);
+                if (sourceProperty === null || typeof sourceProperty === "undefined") {
+                    frame.nextIndex = index + 1;
+                    continue;
+                }
+                targetProperty = getPropertyChild(pair.target, sourceProperty, index);
+                if (targetProperty === null || typeof targetProperty === "undefined") {
+                    frame.nextIndex = index + 1;
+                    continue;
+                }
+                childCount = getCollectionCount(sourceProperty);
+                if (childCount > 0) {
+                    frame.nextIndex = index + 1;
+                    job.stack.push({path: appendPath(frame.path, index), nextIndex: 1});
+                    continue;
+                }
+                if (!consumePropertyOperation(stats, budget)) { return "yield"; }
+                frame.nextIndex = index + 1;
+                job.activePath = appendPath(frame.path, index);
+                job.activeStage = "capability";
+                stats.terminalCount += 1;
+                stats.terminalVisits += 1;
+                return "terminal";
+            }
+            return "done";
+        }
+
+        function isStaticValueTypeCopyable(valueType) {
+            var typeName;
+
+            if (valueType === null || typeof valueType === "undefined") { return true; }
+            try { typeName = String(valueType).toUpperCase(); } catch (typeError) { typeName = ""; }
+            if (typeName === "NO_VALUE" || typeName === "CUSTOM_VALUE" ||
+                    /(?:^|\.)NO_VALUE$/.test(typeName) ||
+                    /(?:^|\.)CUSTOM_VALUE$/.test(typeName)) {
+                return false;
+            }
+            try {
+                if (typeof PropertyValueType !== "undefined" &&
+                        (valueType === PropertyValueType.NO_VALUE ||
+                        valueType === PropertyValueType.CUSTOM_VALUE)) {
+                    return false;
+                }
+            } catch (enumError) {
+                /* Hosts without PropertyValueType use the string fallback. */
+            }
+            return true;
+        }
+
+        function terminalStep(group, layer, groupId, job, stats, budget) {
+            var pair;
+            var canSetExpression;
+            var currentExpression;
+            var currentEnabled;
+            var valueType;
+            var capabilityValue;
+            var capabilityKnown = true;
+
+            if (job.activeStage === "done") {
+                job.activePath = null;
+                job.activeStage = null;
+                job.staticValue = null;
+                return "done";
+            }
+            pair = resolveEffectPair(group, layer, groupId, job);
+            if (pair === null) { return "retry"; }
+            pair = resolvePropertyPair(pair.source, pair.target, job.activePath);
+            if (pair === null) {
+                job.activePath = null;
+                job.activeStage = null;
+                return "retry";
+            }
+            if (job.activeStage === "capability") {
+                if (!consumePropertyOperation(stats, budget)) { return "yield"; }
+                try {
+                    capabilityValue = pair.target.canSetExpression;
+                    capabilityKnown = capabilityValue === true || capabilityValue === false;
+                    canSetExpression = capabilityValue === true;
+                } catch (capabilityError) {
+                    capabilityKnown = false;
+                }
+                if (!capabilityKnown) {
+                    job.activeStage = "done";
+                } else if (canSetExpression) {
+                    job.expression = buildEffectExpressionPath(layerName(group),
+                        job.sourceName, job.activePath);
+                    job.activeStage = "expressionRead";
+                } else if (job.initializeStatic) {
+                    job.activeStage = "staticType";
+                } else {
+                    job.activeStage = "done";
+                }
+                return "progress";
+            }
+            if (job.activeStage === "expressionRead") {
+                if (!consumePropertyOperation(stats, budget)) { return "yield"; }
+                try {
+                    currentExpression = String(pair.target.expression || "");
+                    job.activeStage = currentExpression === job.expression ?
+                        "expressionEnabledRead" : "expressionWrite";
+                } catch (expressionReadError) {
+                    job.activeStage = job.initializeStatic ? "staticType" : "done";
+                }
+                return "progress";
+            }
+            if (job.activeStage === "expressionWrite") {
+                if (!consumePropertyOperation(stats, budget)) { return "yield"; }
+                try {
+                    pair.target.expression = job.expression;
+                    stats.propertyWrites += 1;
+                    job.activeStage = "expressionEnabledRead";
+                } catch (expressionWriteError) {
+                    job.activeStage = job.initializeStatic ? "staticType" : "done";
+                }
+                return "progress";
+            }
+            if (job.activeStage === "expressionEnabledRead") {
+                if (!consumePropertyOperation(stats, budget)) { return "yield"; }
+                try {
+                    currentEnabled = pair.target.expressionEnabled;
+                    job.activeStage = currentEnabled === true ? "done" : "expressionEnabledWrite";
+                } catch (enabledReadError) {
+                    job.activeStage = job.initializeStatic ? "staticType" : "done";
+                }
+                return "progress";
+            }
+            if (job.activeStage === "expressionEnabledWrite") {
+                if (!consumePropertyOperation(stats, budget)) { return "yield"; }
+                try {
+                    pair.target.expressionEnabled = true;
+                    stats.propertyWrites += 1;
+                    job.activeStage = "done";
+                } catch (enabledWriteError) {
+                    job.activeStage = job.initializeStatic ? "staticType" : "done";
+                }
+                return "progress";
+            }
+            if (job.activeStage === "staticType") {
+                if (!consumePropertyOperation(stats, budget)) { return "yield"; }
+                try {
+                    valueType = pair.source.propertyValueType;
+                    job.activeStage = isStaticValueTypeCopyable(valueType) ?
+                        "staticRead" : "done";
+                } catch (valueTypeError) {
+                    job.activeStage = "done";
+                }
+                return "progress";
+            }
+            if (job.activeStage === "staticRead") {
+                if (!consumePropertyOperation(stats, budget)) { return "yield"; }
+                try {
+                    job.staticValue = cloneValue(pair.source.value);
+                    job.activeStage = "staticWrite";
+                } catch (valueReadError) {
+                    job.activeStage = "done";
+                }
+                return "progress";
+            }
+            if (job.activeStage === "staticWrite") {
+                if (!consumePropertyOperation(stats, budget)) { return "yield"; }
+                try {
+                    if (typeof pair.target.setValue === "function") {
+                        pair.target.setValue(job.staticValue);
+                    } else {
+                        pair.target.value = job.staticValue;
+                    }
+                    stats.propertyWrites += 1;
+                } catch (staticWriteError) {
+                    /* A non-writable target is complete for this audit pass. */
+                }
+                job.activeStage = "done";
+                return "progress";
+            }
+            job.activeStage = "done";
+            return "progress";
+        }
+
+        function runPropertyJob(group, layer, groupId, job, stats, budget) {
+            var pair;
+            var next;
+            var result;
+
+            while (!budget.yielded) {
+                pair = resolveEffectPair(group, layer, groupId, job);
+                if (pair === null) { return "retry"; }
+                if (job.activePath === null) {
+                    next = nextTerminalPath(job, pair.source, pair.target, stats, budget);
+                    if (next === "yield") { return "yield"; }
+                    if (next === "done") { return "done"; }
+                }
+                result = terminalStep(group, layer, groupId, job, stats, budget);
+                if (result === "yield") { return "yield"; }
+                if (result === "retry") { return "retry"; }
+            }
+            return "yield";
+        }
+
+        function setEffectNameBounded(effect, name, budget, atomicAdd) {
+            var current;
+
+            if (atomicAdd !== true && !canUseHost(budget)) { return false; }
+            try {
+                current = String(effect.name || "");
+                if (current !== String(name)) {
+                    effect.name = name;
+                    if (atomicAdd !== true && !canUseHost(budget)) { return false; }
+                }
+            } catch (nameError) {
+                return false;
+            }
+            return true;
+        }
+
+        function processTargetWork(entry, group, layer, records, stats, budget) {
+            var work = entry.targetWork;
+            var keepMap;
+            var record;
+            var cleanupIndex;
+            var cleanupCount;
+            var effects;
+            var copy;
+            var created;
+            var reservedName;
+            var propertyResult;
+
+            while (!budget.yielded) {
+                if (work.phase === "removeAll") {
+                    if (work.pendingEffectIndex > 0) {
+                        effects = getEffectsProperty(layer);
+                        copy = getCollectionItem(effects, work.pendingEffectIndex);
+                        if (copy !== null && typeof copy !== "undefined" &&
+                                getEffectMatchName(copy) === work.pendingEffectMatchName &&
+                                (copy === work.pendingEffectRef ||
+                                getEffectName(copy) === work.pendingEffectName ||
+                                work.pendingEffectIndex === getCollectionCount(effects))) {
+                            if (!canUseHost(budget)) { return; }
+                            if (removeEffect(effects, copy)) {
+                                stats.removedCount += 1;
+                                work.pendingEffectIndex = 0;
+                                work.pendingEffectMatchName = "";
+                                work.pendingEffectName = "";
+                                work.pendingEffectRef = null;
+                                return;
+                            }
+                        }
+                        work.pendingEffectIndex = 0;
+                        work.pendingEffectMatchName = "";
+                        work.pendingEffectName = "";
+                        work.pendingEffectRef = null;
+                    }
+                    if (!canUseHost(budget)) { return; }
+                    if (removeOneOwned(getEffectsProperty(layer), entry.id, null, {})) {
+                        stats.removedCount += 1;
+                        return;
+                    }
+                    work.phase = "complete";
+                    continue;
+                }
+                if (work.phase === "cleanup") {
+                    effects = getEffectsProperty(layer);
+                    if (work.keepMap === null || typeof work.keepMap === "undefined") {
+                        keepMap = makePlainObject();
+                        for (record = 0; record < records.length; record += 1) {
+                            keepMap[String(records[record].effectIndex)] = true;
+                        }
+                        work.keepMap = keepMap;
+                    } else {
+                        keepMap = work.keepMap;
+                    }
+                    cleanupCount = getCollectionCount(effects);
+                    if (work.cleanupIndex === null ||
+                            typeof work.cleanupIndex === "undefined") {
+                        work.cleanupIndex = cleanupCount;
+                    } else if (work.cleanupIndex > cleanupCount) {
+                        work.cleanupIndex = cleanupCount;
+                    }
+                    if (work.cleanupIndex <= 0) {
+                        work.phase = "effects";
+                        continue;
+                    }
+                    while (work.cleanupIndex >= 1) {
+                        if (!canUseHost(budget)) { return; }
+                        cleanupIndex = work.cleanupIndex;
+                        work.cleanupIndex = cleanupIndex - 1;
+                        copy = getCollectionItem(effects, cleanupIndex);
+                        if (copy === null || typeof copy === "undefined") {
+                            continue;
+                        }
+                        record = getReservedInfo(copy);
+                        if (record === null || record.groupId !== entry.id) {
+                            continue;
+                        }
+                        if (hasOwn(keepMap, String(record.effectIndex)) &&
+                                !hasOwn(work.preservedMap, String(record.effectIndex))) {
+                            work.preservedMap[String(record.effectIndex)] = true;
+                            continue;
+                        }
+                        if (removeEffect(effects, copy)) {
+                            stats.removedCount += 1;
+                            return;
+                        }
+                    }
+                    work.phase = "effects";
+                    continue;
+                }
+                if (work.phase === "effects") {
+                    if (work.effectJob !== null && typeof work.effectJob !== "undefined") {
+                        propertyResult = runPropertyJob(group, layer, entry.id,
+                            work.effectJob, stats, budget);
+                        if (propertyResult === "yield") { return; }
+                        if (propertyResult === "retry") {
+                            work.effectJob = null;
+                            return;
+                        }
+                        work.effectJob = null;
+                        work.effectIndex += 1;
+                        continue;
+                    }
+                    if (work.effectIndex >= records.length) {
+                        work.phase = "complete";
+                        continue;
+                    }
+                    record = records[work.effectIndex];
+                    effects = getEffectsProperty(layer);
+                    copy = null;
+                    created = false;
+                    if (work.pendingEffectIndex > 0 &&
+                            work.pendingEffectMatchName === record.matchName) {
+                        copy = getCollectionItem(effects, work.pendingEffectIndex);
+                        if ((copy === null || typeof copy === "undefined") &&
+                                work.pendingEffectRef !== null &&
+                                typeof work.pendingEffectRef !== "undefined" &&
+                                collectionContains(effects, work.pendingEffectRef)) {
+                            copy = work.pendingEffectRef;
+                        }
+                        if (copy === null || typeof copy === "undefined" ||
+                                getEffectMatchName(copy) !== record.matchName) {
+                            copy = null;
+                            work.pendingEffectIndex = 0;
+                            work.pendingEffectMatchName = "";
+                            work.pendingEffectName = "";
+                            work.pendingEffectRef = null;
+                        } else {
+                            created = true;
+                        }
+                    }
+                    if (copy === null || typeof copy === "undefined") {
+                        copy = findOwnedEffect(effects, entry.id, record.effectIndex);
+                    }
+                    if (copy !== null && getEffectMatchName(copy) !== record.matchName) {
+                        if (!canUseHost(budget)) { return; }
+                        if (!removeEffect(effects, copy)) { return; }
+                        stats.removedCount += 1;
+                        return;
+                    }
+                    if (copy === null || typeof copy === "undefined") {
+                        if (!consumeEffectAdd(stats, budget)) { return; }
+                        copy = addEffectCopy(effects, record);
+                        if (copy === null || typeof copy === "undefined") { return; }
+                        created = true;
+                        stats.createdCount += 1;
+                        work.pendingEffectIndex = getCollectionCount(effects);
+                        work.pendingEffectMatchName = record.matchName;
+                        work.pendingEffectRef = copy;
+                    }
+                    reservedName = makeReservedEffectName(entry.id, record.effectIndex,
+                        record.sourceName);
+                    work.pendingEffectName = reservedName;
+                    if (!setEffectNameBounded(copy, reservedName, budget, created)) { return; }
+                    work.pendingEffectIndex = 0;
+                    work.pendingEffectMatchName = "";
+                    work.pendingEffectName = "";
+                    work.pendingEffectRef = null;
+                    if (created && !canUseHost(budget)) { return; }
+                    work.effectJob = makePropertyJob(record, work.sourceKey, created);
+                    continue;
+                }
+                return;
+            }
+        }
+
+        function targetOne(stats, budget) {
             var entry;
+            var group;
             var range;
             var rangeKey;
-            var layer;
             var records;
             var sourceKey;
-            var targetKey;
+            var work;
+            var layer;
+            var targetIndex;
+            var targetId;
             var cacheKey;
             var cached;
+            var targetKey;
             var targets;
+            var eligible;
+            var complete;
+
+            if (groups.length === 0) { return; }
             if (groupIndex >= groups.length) { groupIndex = 0; }
             entry = groups[groupIndex];
             groupIndex += 1;
-            if (!isLiveGroup(entry)) { return; }
-            range = currentRange(entry);
+            group = resolveGroupLayer(entry);
+            if (group === null || typeof group === "undefined") { return; }
+            range = currentRange(entry, group);
             rangeKey = range.startIndex + ":" + range.endIndex;
-            if (entry.rangeKey !== rangeKey) {
-                entry.rangeKey = rangeKey;
-                entry.cursor = range.startIndex;
-                entry.remaining = Math.max(0, range.endIndex - range.startIndex + 1);
-                cleanupRemaining = layerCount;
+            records = getSourceRecords(group);
+            sourceKey = shallowSignature(group, records);
+            if (entry.rangeKey !== rangeKey || entry.sourceKey !== sourceKey) {
+                resetEntryTargets(entry, range, sourceKey);
             }
             if (range.endIndex < range.startIndex) { return; }
-            if (entry.cursor < range.startIndex || entry.cursor > range.endIndex) {
-                entry.cursor = range.startIndex;
+
+            work = entry.targetWork;
+            if (work !== null && typeof work !== "undefined") {
+                if (work.rangeKey !== rangeKey || work.sourceKey !== sourceKey) {
+                    entry.cursor = work.layerIndex;
+                    entry.targetWork = null;
+                    work = null;
+                } else {
+                    layer = readLayer(work.layerIndex);
+                    if (getLayerId(layer) !== work.layerId) {
+                        entry.cursor = work.layerIndex;
+                        entry.targetWork = null;
+                        work = null;
+                    } else {
+                        targets = membership(range);
+                        eligible = isEligibleTarget(group, targets, layer);
+                        if (work.eligible !== eligible) {
+                            work.eligible = eligible;
+                            work.phase = eligible ? "cleanup" : "removeAll";
+                            work.effectIndex = 0;
+                            work.effectJob = null;
+                            work.preservedMap = {};
+                            work.keepMap = null;
+                            work.cleanupIndex = null;
+                        }
+                    }
+                }
             }
-            layer = readLayer(entry.cursor);
-            entry.cursor += 1;
-            if (!layer) { return; }
-            targets = membership(range);
-            cacheKey = getGroupKey(getLayerId(layer));
-            if (!isEligibleTarget(entry.layer, targets, layer)) {
-                stats.removedCount += removeOwnedFromEffects(getEffectsProperty(layer), entry.id, null);
-                delete entry.cache[cacheKey];
+            if (work === null || typeof work === "undefined") {
+                if (entry.cursor < range.startIndex || entry.cursor > range.endIndex) {
+                    entry.cursor = range.startIndex;
+                }
+                if (entry.cursor > range.endIndex) { return; }
+                targetIndex = entry.cursor;
+                entry.cursor += 1;
+                layer = readLayer(targetIndex);
+                if (layer === null || typeof layer === "undefined") {
+                    entry.remaining = Math.max(0, entry.remaining - 1);
+                    return;
+                }
+                targetId = getLayerId(layer);
+                if (targetId <= 0) {
+                    entry.remaining = Math.max(0, entry.remaining - 1);
+                    return;
+                }
+                cacheKey = getGroupKey(targetId);
+                targetKey = shallowSignature(layer, null);
+                cached = entry.cache[cacheKey];
+                targets = membership(range);
+                eligible = isEligibleTarget(group, targets, layer);
+                if (eligible && cached &&
+                        cached.sourceKey === sourceKey && cached.targetKey === targetKey &&
+                        nowValue() - cached.auditAt < limit(settings.auditIntervalMs, 5000)) {
+                    stats.skippedTargets += 1;
+                    entry.remaining = Math.max(0, entry.remaining - 1);
+                    return;
+                }
+                work = {layerIndex: targetIndex, layerId: targetId,
+                    rangeKey: rangeKey, sourceKey: sourceKey, targetKey: targetKey,
+                    phase: eligible ? "cleanup" : "removeAll",
+                    effectIndex: 0, effectJob: null, preservedMap: {}, keepMap: null,
+                    cleanupIndex: null, pendingEffectIndex: 0,
+                    pendingEffectMatchName: "", pendingEffectName: "", pendingEffectRef: null,
+                    eligible: eligible};
+                entry.targetWork = work;
+            }
+            processTargetWork(entry, group, layer, records, stats, budget);
+            complete = entry.targetWork !== null && entry.targetWork.phase === "complete";
+            if (complete) {
+                cacheKey = getGroupKey(work.layerId);
+                entry.cache[cacheKey] = {sourceKey: sourceKey, targetKey: work.targetKey,
+                    auditAt: nowValue()};
+                entry.targetWork = null;
                 entry.remaining = Math.max(0, entry.remaining - 1);
-                return;
             }
-            records = getSourceRecords(entry.layer);
-            sourceKey = shallowSignature(entry.layer, records);
-            if (sourceKey !== entry.sourceKey) {
-                entry.sourceKey = sourceKey;
-                entry.remaining = range.endIndex - range.startIndex + 1;
-            }
-            targetKey = shallowSignature(layer, null);
-            cached = entry.cache[cacheKey];
-            if (cached && cached.sourceKey === sourceKey && cached.targetKey === targetKey &&
-                    time - cached.auditAt < limit(settings.auditIntervalMs, 5000)) {
-                stats.skippedTargets += 1;
-            } else {
-                syncTargetEffects(entry.layer, entry.id, targets, layer, records, stats);
-                entry.cache[cacheKey] = {sourceKey: sourceKey,
-                    targetKey: shallowSignature(layer, null), auditAt: time};
-            }
-            entry.remaining = Math.max(0, entry.remaining - 1);
         }
 
         function pending() {
             var index;
-            if (!discovered || cleanupRemaining > 0) { return layerCount > 0; }
+
+            if (!discovered || cleanupRemaining > 0 || cleanupLayerId > 0) {
+                return layerCount > 0;
+            }
             for (index = 0; index < groups.length; index += 1) {
+                if (groups[index].targetWork !== null &&
+                        typeof groups[index].targetWork !== "undefined") { return true; }
                 if (groups[index].remaining > 0 || groups[index].cursor === 0) { return true; }
             }
             return false;
@@ -1310,21 +2038,30 @@ var GroupControlEffectSync = (function () {
         function step(comp, budget) {
             var request = budget || {};
             var stats = emptyStats();
-            var started = clockNow();
-            var operations = 0;
+            var started = nowValue();
             var count;
             var keys;
             var index;
             var scanLimit = limit(request.maxDiscoveryLayers, limit(settings.maxDiscoveryLayers, 16));
             var targetLimit = limit(request.maxTargetLayers, limit(settings.maxTargetLayers, 2));
             var timeLimit = limit(request.timeBudgetMs, limit(settings.timeBudgetMs, 12));
+            var propertyLimit = limitBudget(request.maxPropertyOperations,
+                limitBudget(settings.maxPropertyOperations, 8));
+            var effectAddLimit = limitBudget(request.maxEffectAdds,
+                limitBudget(settings.maxEffectAdds, 1));
+            var workBudget = {started: started, timeLimit: timeLimit,
+                maxPropertyOperations: propertyLimit, maxEffectAdds: effectAddLimit,
+                propertyOperations: 0, effectAddAttempts: 0, yielded: false,
+                yieldReason: ""};
 
             if (comp !== activeComp || request.projectId !== projectId) {
                 reset();
                 activeComp = comp;
                 projectId = request.projectId;
+                started = nowValue();
+                workBudget.started = started;
             }
-            try { count = comp ? Number(comp.numLayers) : 0; } catch (error) { count = 0; }
+            try { count = comp ? Number(comp.numLayers) : 0; } catch (countError) { count = 0; }
             count = isFinite(count) ? Math.max(0, Math.floor(count)) : 0;
             if (count !== layerCount) {
                 layerCount = count;
@@ -1332,21 +2069,26 @@ var GroupControlEffectSync = (function () {
                 generation += 1;
                 discovered = false;
                 discoveryInProgress = true;
+                groups = [];
+                byId = {};
+                groupIndex = 0;
                 cleanupIndex = 1;
                 cleanupRemaining = count;
+                cleanupLayerIndex = 0;
+                cleanupLayerId = 0;
+                cleanupEffectIndex = 0;
             }
 
-            function hasTime() { return operations === 0 || clockNow() - started < timeLimit; }
+            function hasTime() { return canUseHost(workBudget); }
             function scan() {
-                // Do not scan small comps more than once in a single tick.
                 var maximum = Math.min(scanLimit, layerCount);
+
                 if (!discoveryInProgress) {
-                    if (clockNow() < nextDiscoveryAt) { return; }
+                    if (nowValue() < nextDiscoveryAt) { return; }
                     discoveryInProgress = true;
                 }
                 while (stats.discoveryLayers < maximum && discoveryInProgress && hasTime()) {
                     discoverOne(stats);
-                    operations += 1;
                 }
             }
             function work() {
@@ -1354,21 +2096,23 @@ var GroupControlEffectSync = (function () {
                     stats.targetLayers += 1;
                     try {
                         if (groups.length === 0 || workSerial % 4 === 0) {
-                            cleanupOne(stats);
+                            cleanupOne(stats, workBudget);
                         } else {
-                            targetOne(stats, clockNow());
+                            targetOne(stats, workBudget);
                         }
-                    } catch (error) { stats.errors += 1; }
+                    } catch (workError) { stats.errors += 1; }
                     workSerial += 1;
-                    operations += 1;
+                    if (workBudget.yielded) { break; }
                 }
             }
             if (preferWork) { work(); scan(); } else { scan(); work(); }
             preferWork = !preferWork;
-            stats.terminalVisits = stats.terminalCount;
+            stats.yielded = workBudget.yielded;
+            stats.yieldReason = workBudget.yieldReason;
             stats.pending = pending();
-            stats.elapsedMs = Math.max(0, clockNow() - started);
+            stats.elapsedMs = Math.max(0, nowValue() - started);
             keys = ["discoveryLayers", "targetLayers", "terminalVisits", "terminalCount",
+                "propertyOperations", "propertyWrites", "effectAddAttempts",
                 "createdCount", "removedCount", "skippedTargets", "errors"];
             for (index = 0; index < keys.length; index += 1) {
                 totals[keys[index]] += stats[keys[index]];

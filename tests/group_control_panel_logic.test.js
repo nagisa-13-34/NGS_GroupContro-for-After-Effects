@@ -21,8 +21,30 @@ class FakeProperty {
     this.value = value;
     this.numKeys = 0;
     this.canSetExpression = true;
-    this.expressionEnabled = false;
-    this.expression = '';
+    this.expressionWrites = 0;
+    this.expressionEnabledWrites = 0;
+    let expressionValue = '';
+    let expressionEnabledValue = false;
+    Object.defineProperty(this, 'expression', {
+      configurable: true,
+      get() {
+        return expressionValue;
+      },
+      set(nextValue) {
+        this.expressionWrites += 1;
+        expressionValue = nextValue;
+      },
+    });
+    Object.defineProperty(this, 'expressionEnabled', {
+      configurable: true,
+      get() {
+        return expressionEnabledValue;
+      },
+      set(nextValue) {
+        this.expressionEnabledWrites += 1;
+        expressionEnabledValue = nextValue;
+      },
+    });
   }
 
   setValue(value) {
@@ -386,6 +408,51 @@ function makeLargeWatcherFixture(groupCount = 20) {
   };
 }
 
+function makeLargeParameterWatcherFixture(parameterCount = 240) {
+  const group = new FakeLayer(100, '[G] Large Parameter Group', { nullLayer: true });
+  const root = new FakeLayer(101, 'Large Parameter Root');
+  const comp = new FakeComp([group, root]);
+  const groupControl = group.effects.property(1);
+  const sources = [
+    group.effects.addProperty('NGS_LargeEffect_A'),
+    group.effects.addProperty('NGS_LargeEffect_B'),
+  ];
+
+  groupControl.property(1).setValue(1);
+  sources.forEach((source, sourceIndex) => {
+    source.name = `Large Effect ${sourceIndex + 1}`;
+    source.items = Array.from({ length: parameterCount }, (_, index) => (
+      new FakeProperty(
+        `${source.matchName}-${index + 1}`,
+        `Parameter ${index + 1}`,
+        index,
+      )
+    ));
+  });
+
+  const addProperty = root.effects.addProperty.bind(root.effects);
+  root.effects.addProperty = (matchName) => {
+    const effect = addProperty(matchName);
+    const source = sources.find((candidate) => candidate.matchName === matchName);
+    if (source) {
+      effect.items = source.items.map((property) => (
+        new FakeProperty(property.matchName, property.name, property.value)
+      ));
+    }
+    return effect;
+  };
+
+  return { comp, group, root, sources };
+}
+
+function expressionWriteCount(layer) {
+  return layer.effects.items.reduce((total, effect) => (
+    total + effect.items.reduce((effectTotal, property) => (
+      effectTotal + property.expressionWrites
+    ), 0)
+  ), 0);
+}
+
 test('Apply attaches only roots, preserves internal parents, and counts external candidates', () => {
   const panel = loadPanel();
   const external = new FakeLayer(200, 'External');
@@ -602,6 +669,35 @@ test('buildUI starts one-shot watcher sync, reschedules after a Tick, and stops 
   assert.equal(scheduler.pendingCount(), 0);
 });
 
+test('watcher passes the agreed Effect work budgets into the incremental session', () => {
+  const panel = loadPanel();
+  let receivedOptions = null;
+
+  panel.GroupControlEffectSync.createIncrementalSession = (options) => {
+    receivedOptions = options;
+    return {};
+  };
+
+  const session = panel.createGroupEffectWatcherSession();
+
+  assert.deepEqual(session, {});
+  assert.equal(receivedOptions.maxDiscoveryLayers, 16);
+  assert.equal(receivedOptions.maxTargetLayers, 2);
+  assert.equal(receivedOptions.timeBudgetMs, 12);
+  assert.equal(receivedOptions.maxPropertyOperations, 8);
+  assert.equal(receivedOptions.maxEffectAdds, 1);
+});
+
+test('watcher empty stats include the Effect work counters', () => {
+  const panel = loadPanel();
+  const stats = panel.GroupControlEffectWatcherGetStats();
+
+  assert.equal(stats.lastTick.propertyOperations, 0);
+  assert.equal(stats.lastTick.effectAddAttempts, 0);
+  assert.equal(stats.totals.propertyOperations, 0);
+  assert.equal(stats.totals.effectAddAttempts, 0);
+});
+
 test('active-comp watcher synchronizes every Group Null in the active composition', () => {
   const scheduler = new FakeScheduler();
   const firstGroup = new FakeLayer(100, '[G] First', { nullLayer: true });
@@ -704,6 +800,51 @@ test('watcher bounds one large-comp tick by host access and copy creation before
   panel.GroupControlEffectWatcherStop();
 });
 
+test('watcher caps real Expression setters and Effect additions per tick for a large Effect', () => {
+  const scheduler = new FakeScheduler();
+  const { comp, root } = makeLargeParameterWatcherFixture();
+  const panel = loadPanel({ scheduler });
+  panel.app.project.activeItem = comp;
+
+  const observedTicks = [];
+  let previousExpressionWrites = expressionWriteCount(root);
+  let previousEffectAdds = effectAddPropertyCount(comp);
+  const observeTick = () => {
+    const expressionWrites = expressionWriteCount(root);
+    const effectAdds = effectAddPropertyCount(comp);
+    observedTicks.push({
+      expressionWrites: expressionWrites - previousExpressionWrites,
+      effectAdds: effectAdds - previousEffectAdds,
+    });
+    previousExpressionWrites = expressionWrites;
+    previousEffectAdds = effectAdds;
+  };
+
+  panel.GroupControlEffectWatcherStart();
+  observeTick();
+  // A parameter can need separate visits for discovery, expression, and enable.
+  // Require convergence within a finite bound while checking every tick's work.
+  for (let index = 0; index < 1000 && panel.GroupControlEffectWatcherGetStats().pending; index += 1) {
+    assert.equal(scheduler.runNext(panel), true);
+    observeTick();
+  }
+
+  assert.equal(panel.GroupControlEffectWatcherGetStats().pending, false);
+  assert.ok(observedTicks.some((tick) => tick.expressionWrites > 0));
+  assert.ok(observedTicks.every((tick) => tick.expressionWrites <= 8));
+  assert.ok(observedTicks.every((tick) => tick.effectAdds <= 1));
+  assert.equal(
+    root.effects.items.filter((effect) => effect.name.indexOf('[GFX:100:') === 0).length,
+    2,
+  );
+  const copies = root.effects.items.filter((effect) => effect.name.indexOf('[GFX:100:') === 0);
+  assert.equal(copies.reduce((count, effect) => count + effect.items.length, 0), 480);
+  assert.ok(copies.every((effect) => effect.items.every((property) => (
+    property.expression.length > 0 && property.expressionEnabled
+  ))));
+  panel.GroupControlEffectWatcherStop();
+});
+
 test('RunOnce performs one bounded tick without reserving a schedule task', () => {
   const scheduler = new FakeScheduler();
   const { comp } = makeLargeWatcherFixture();
@@ -755,6 +896,7 @@ test('watcher resets the incremental session for no comp, project switches, and 
   app.project = projectA;
   panel.GroupControlEffectWatcherStart();
   const resetAfterStart = resetCalls;
+  const reservationBeforeStop = scheduler.scheduleCalls[scheduler.scheduleCalls.length - 1].expression;
   assert.equal(projectIds[0], projectA);
 
   projectA.activeItem = null;
@@ -770,6 +912,9 @@ test('watcher resets the incremental session for no comp, project switches, and 
   panel.GroupControlEffectWatcherStop();
   assert.ok(resetCalls > resetAfterNoComp);
   assert.equal(scheduler.pendingCount(), 0);
+  const stepsAfterStop = projectIds.length;
+  vm.runInNewContext(reservationBeforeStop, panel);
+  assert.equal(projectIds.length, stepsAfterStop);
 });
 
 test('reloading cancels the old reservation, ignores stale ticks, and protects the new watcher from old close', () => {
@@ -797,11 +942,15 @@ test('reloading cancels the old reservation, ignores stale ticks, and protects t
   assert.equal(scheduler.pendingCount(), 1);
 
   const pendingBeforeStaleReservation = scheduler.pendingCount();
+  const ticksBeforeStaleReservation = newPanel.GroupControlEffectWatcherGetStats().totals.ticks;
   vm.runInNewContext(oldReservation, newPanel);
   assert.equal(scheduler.pendingCount(), pendingBeforeStaleReservation);
+  assert.equal(newPanel.GroupControlEffectWatcherGetStats().totals.ticks, ticksBeforeStaleReservation);
 
+  const ticksBeforeOldTick = newPanel.GroupControlEffectWatcherGetStats().totals.ticks;
   oldPanel.GroupControlEffectWatcherTick();
   assert.equal(scheduler.pendingCount(), 1);
+  assert.equal(newPanel.GroupControlEffectWatcherGetStats().totals.ticks, ticksBeforeOldTick);
 
   oldUI.onClose();
   assert.equal(scheduler.pendingCount(), 1);

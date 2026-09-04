@@ -482,6 +482,8 @@ function makeEmptyGroupEffectWatcherTickStats() {
         targetLayers: 0,
         terminalVisits: 0,
         terminalCount: 0,
+        propertyOperations: 0,
+        effectAddAttempts: 0,
         createdCount: 0,
         removedCount: 0,
         skippedTargets: 0,
@@ -501,6 +503,8 @@ function makeEmptyGroupEffectWatcherStats() {
             targetLayers: 0,
             terminalVisits: 0,
             terminalCount: 0,
+            propertyOperations: 0,
+            effectAddAttempts: 0,
             createdCount: 0,
             removedCount: 0,
             skippedTargets: 0,
@@ -652,6 +656,8 @@ function createGroupEffectWatcherSession() {
             maxDiscoveryLayers: 16,
             maxTargetLayers: 2,
             timeBudgetMs: 12,
+            maxPropertyOperations: 8,
+            maxEffectAdds: 1,
             now: function () {
                 return new Date().getTime();
             }

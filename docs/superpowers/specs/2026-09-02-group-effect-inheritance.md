@@ -54,7 +54,10 @@ Property番号は、元Effect内の各階層で1から数えた番号を使う�
 Deep Glow 2の`Color` / `Color Inner`のように表示名が変わる場合や、同名のPropertyが複数ある場合も、表示名の検索に依存せず参照する。
 既存コピーに残っている名前参照の式は、修正版Panelを開き直した後の同期で番号参照へ更新する。
 
-Expressionを設定できないPropertyは、その時点の値を一度だけコピーし、同期不能として扱う。Propertyツリーの走査範囲はEffect Parade内だけであり、Layerの `ADBE Transform Group` は走査しない。したがってPosition、Scale、RotationなどのLayer TransformへExpressionは追加しない。
+Expressionを設定できないPropertyは、読み書きできる型に限って、その時点の値を一度だけコピーし、同期不能として扱う。
+値を持たない`NO_VALUE`や、汎用の読み書きができない`CUSTOM_VALUE`は値を取得せずに除外する。
+対応可否を取得できないPropertyも、対応していると仮定してExpressionを書き込まない。
+Propertyツリーの走査範囲はEffect Parade内だけであり、Layerの `ADBE Transform Group` は走査しない。したがってPosition、Scale、RotationなどのLayer TransformへExpressionは追加しない。
 
 ## 自動監視
 
@@ -66,12 +69,20 @@ ScriptUI Panelの起動時に `app.scheduleTask` を使った1回実行型の監
 
 - Active CompのLayerを少数ずつ読み、Group Nullと管理用コピーを探す。
 - 現在のLayer Countと親子関係を確認し、少数の対象LayerへEffectを反映する。
+- 1つの対象Layerの処理もEffectとPropertyごとに分割し、次の監視で続きから処理する。
 - Effectの構造や名前に変化がなければ、末端Propertyツリーの再走査を省く。
 - 分割した定期再確認により、構造の変化を伴わないExpressionの無効化なども検出する。
 - Groupの削除や対象範囲の変更で不要になった管理用コピーを順次整理する。
 
 処理量の上限は監視1回の全グループ合計に適用する。
 標準設定ではLayerの発見を16件、対象への反映と不要コピーの掃除を合わせて2件までとし、処理の区切りで12msの時間予算を確認する。
+Property処理とEffect追加にも全Group合計の上限を設け、大きなEffectの全パラメータを1回で処理しない。
+標準設定ではProperty処理を8件、Effect追加の試行を1件までとし、追加に失敗した場合も試行数に含める。
+Effect追加は管理用の命名までを1つの操作として扱う。
+追加自体が時間予算を超えた場合も命名まで終え、後続のProperty設定を次回へ回す。
+途中の処理ではEffectやPropertyの古い参照を持ち越さず、現在の参照を取り直す。
+対象範囲やEffect構造が変わった場合は古い処理を続行せず、現在の状態でやり直す。
+変更なしとする記録は、対象の処理が最後まで終わった後に保存する。
 Groupごとにコンポ全体を再列挙する処理を監視経路に入れない。
 コンポ切替、Panelの終了や再読み込みでは進行中の監視状態を破棄する。
 途中でLayerの順序やLayer Countが変わった場合も、現在の対象範囲を確認してから書き込む。
