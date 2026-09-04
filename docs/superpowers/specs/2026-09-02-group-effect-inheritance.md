@@ -45,10 +45,14 @@ Group Null側Effectのindexが同じ場合は既存複製を再利用し、元�
 複製Effectのパラメータツリーを再帰的に走査し、Expressionを設定できる末端Propertyへ次の形式のExpressionを設定する。
 
 ```javascript
-thisComp.layer("<Group Null名>").effect("<元Effect名>")("<Property名>")...
+thisComp.layer("<Group Null名>").effect("<元Effect名>")(<Property番号>)...
 ```
 
 Group NullのEffectパラメータにキーまたはExpressionがあれば、複製側は現在時刻の値を毎フレーム取得する。Panelの監視周期で数値をsetValueし続ける方式にはしない。
+
+Property番号は、元Effect内の各階層で1から数えた番号を使う。
+Deep Glow 2の`Color` / `Color Inner`のように表示名が変わる場合や、同名のPropertyが複数ある場合も、表示名の検索に依存せず参照する。
+既存コピーに残っている名前参照の式は、修正版Panelを開き直した後の同期で番号参照へ更新する。
 
 Expressionを設定できないPropertyは、その時点の値を一度だけコピーし、同期不能として扱う。Propertyツリーの走査範囲はEffect Parade内だけであり、Layerの `ADBE Transform Group` は走査しない。したがってPosition、Scale、RotationなどのLayer TransformへExpressionは追加しない。
 

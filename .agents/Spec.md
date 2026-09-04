@@ -874,7 +874,7 @@ Effectの複製対象は、Group Nullのindex直下からLayer Countで得た現
 
 Panel起動中は`app.scheduleTask`で約200msを指定して次回の監視を予約し、Effectの追加 / 削除、Group対象変更、複製の手動削除を差分反映する。監視1回の全グループ合計に処理量の上限を設け、Layerの発見、Effectの反映、不要コピーの掃除を複数回に分けて進める。数値の追従はExpressionに任せる。Panel起動時も分割処理で現在状態へ同期する。
 
-PropertyツリーはEffect Parade内だけを再帰走査し、Expressionを設定できる末端Propertyに限って、`thisComp.layer("<Group Null名>").effect("<元Effect名>")("<Property名>")...`形式のExpressionを設定する。Expression非対応の末端Propertyは現在値を一度だけコピーし、同期不能として扱う。`ADBE Transform Group`やその配下へExpressionを書き込んではいけない。
+PropertyツリーはEffect Parade内だけを再帰走査し、Expressionを設定できる末端Propertyに限って、`thisComp.layer("<Group Null名>").effect("<元Effect名>")(<Property番号>)...`形式のExpressionを設定する。各階層の番号は元Effect内で1から数え、表示名の変化や重複に依存しない。Expression非対応の末端Propertyは現在値を一度だけコピーし、同期不能として扱う。`ADBE Transform Group`やその配下へExpressionを書き込んではいけない。
 
 監視は構造差分を扱い、変更がなければ末端Propertyの再走査を省く。Expressionの無効化などは分割した定期再確認で検出する。値の毎フレーム`setValue`は行わない。監視の各回は1回実行型の次回`app.scheduleTask`を予約し、重複予約を作らない。コンポ切替やPanelの終了 / 再読み込みでは監視状態を破棄する。反映完了までに必要な監視回数はLayer数とEffect数に依存し、200ms以内の完了は保証しない。詳細は`docs/superpowers/specs/2026-09-02-group-effect-inheritance.md`の自動監視仕様に従う。
 

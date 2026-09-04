@@ -47,6 +47,9 @@ Group ControlのネイティブEffectも不要である。
 
 修正版の`GroupControl.jsx`と2つの`jsxinc`を同じフォルダに置き、Group ControlのPanelを開き直す。
 既に開いている古いPanelのコードは、ファイルを差し替えただけでは更新されない。
+古いPanelが監視を続けていると、手動修正したExpressionを古い形式へ書き戻すことがある。
+Deep Glow 2で`Color Inner`が見つからないエラーが出た場合も、修正版を開き直して同期を待つ。
+管理用コピーを再作成せず、番号で参照する式へ更新される。
 
 確認用コンポでGroupを作成し、Layer Countを指定してApplyする。
 Group Nullに通常Effectを追加した後、対象への反映が順次進むことを確認する。
@@ -65,7 +68,7 @@ Panelを閉じた後は新しい同期が発生せず、再度開くと現在状
 
 ## 2026-09-04の確認状況
 
-Nodeの回帰テストは43件すべて成功し、`git diff --check`も問題なし。
+Nodeの回帰テストは44件すべて成功し、`git diff --check`も問題なし。
 多数Layerでの処理上限、変更のないコピーの再利用、定期的なExpression復旧、Group移動中のコピー保持、Panel再読み込み後の古い予約を確認した。
 
 Windows x64のReleaseビルドはAfter Effects SDK 25.6を使って成功した。
@@ -74,3 +77,16 @@ Windows x64のReleaseビルドはAfter Effects SDK 25.6を使って成功した�
 AE用コネクターからプロジェクト情報は取得できたが、任意スクリプトの実行は`eval.run=disabled`で許可されていない。
 この接続から修正版のJSXや実機プローブは実行していない。
 AE内のExpression評価、Panelの実際の反映速度、フリーズ症状の解消は実機確認が残る。
+
+## Deep Glow 2の名前参照エラー
+
+AE 24.6.8 / Deep Glow 2 v1.1.0で、`PEDG2-0042`の表示名が元Effectでは`Color Inner`、一部のコピーでは`Color`となる状態を確認した。
+既存の`("Color Inner")`を含む式で、名前が見つからないエラーが出ていた。
+現環境の元Effectを調べると、このパラメータの番号は84だった。
+1つのコピーを`thisComp.layer("[G] Group").effect("Deep Glow 2")(84)`に変更したところ、コネクターは`expressionEnabled: true`を返し、値`[1, 0, 0, 1]`を取得できた。
+84はこのEffectのこの版で確認した番号であり、同期コードは走査時の番号を使う。
+
+番号によるEffectパラメータ参照は[AdobeのExpressionリファレンス](https://helpx.adobe.com/after-effects/desktop/work-with-expressions/expression-language-reference/expression-language-reference.html)にも記載されている。
+古いPanelの監視で名前参照へ戻されることも確認したため、コード更新後はPanelの再読み込みが必要になる。
+今回の実機操作は1つのExpressionの確認であり、修正版Panel全体の実機検証は含まない。
+名前解決が失敗する模擬Effectに生成式を適用する回帰テストでは、番号による値の取得と、既存コピーを再作成しない旧式の更新を確認した。

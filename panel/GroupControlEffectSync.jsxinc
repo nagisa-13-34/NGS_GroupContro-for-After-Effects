@@ -359,7 +359,11 @@ var GroupControlEffectSync = (function () {
         }
 
         for (index = 0; index < path.length; index += 1) {
-            expression += "(\"" + quoteExpressionText(path[index]) + "\")";
+            if (typeof path[index] === "number") {
+                expression += "(" + String(path[index]) + ")";
+            } else {
+                expression += "(\"" + quoteExpressionText(path[index]) + "\")";
+            }
         }
 
         return expression;
@@ -856,7 +860,6 @@ var GroupControlEffectSync = (function () {
         var index;
         var sourceProperty;
         var targetProperty;
-        var displayName;
         var childCount;
 
         for (index = 1; index <= count; index += 1) {
@@ -870,14 +873,13 @@ var GroupControlEffectSync = (function () {
                 continue;
             }
 
-            displayName = getPropertyDisplayName(sourceProperty);
             childCount = getCollectionCount(sourceProperty);
             if (childCount > 0) {
                 syncPropertyTree(sourceProperty, targetProperty, layerName, effectName,
-                    appendPath(propertyPath, displayName), initializeStatic, stats);
+                    appendPath(propertyPath, index), initializeStatic, stats);
             } else {
                 setTerminalLink(sourceProperty, targetProperty, layerName, effectName,
-                    appendPath(propertyPath, displayName), initializeStatic);
+                    appendPath(propertyPath, index), initializeStatic);
                 if (stats !== null && typeof stats !== "undefined") {
                     stats.terminalCount += 1;
                 }

@@ -383,6 +383,97 @@ function snapshotTransform(layer) {
   }));
 }
 
+function evaluateGeneratedExpression(expression, comp, resolver) {
+  const prefix = /^thisComp\.layer\("((?:\\.|[^"])*)"\)\.effect\("((?:\\.|[^"])*)"\)/;
+  const prefixMatch = prefix.exec(expression);
+  assert.ok(prefixMatch, `Unsupported generated expression: ${expression}`);
+
+  const layerName = JSON.parse(`"${prefixMatch[1]}"`);
+  const effectName = JSON.parse(`"${prefixMatch[2]}"`);
+  let property = resolver.layer(comp, layerName);
+  property = resolver.effect(property, effectName);
+
+  let suffix = expression.slice(prefixMatch[0].length);
+  const segments = [];
+  const segmentPattern = /^\((\d+|"(?:\\.|[^"])*")\)/;
+  while (suffix.length > 0) {
+    const segmentMatch = segmentPattern.exec(suffix);
+    assert.ok(segmentMatch, `Unsupported generated property path: ${suffix}`);
+    segments.push(segmentMatch[1][0] === '"'
+      ? JSON.parse(segmentMatch[1])
+      : Number(segmentMatch[1]));
+    suffix = suffix.slice(segmentMatch[0].length);
+  }
+
+  for (const identifier of segments) {
+    property = resolver.property(property, identifier);
+  }
+
+  return property.value;
+}
+
+function makeDeepGlowExpressionResolverFixture() {
+  const templates = makeEffectTemplates();
+  const properties = Array.from({ length: 84 }, (_, index) => (
+    new FakeProperty(
+      `PEDG2-${String(index + 1).padStart(4, '0')}`,
+      `Parameter ${index + 1}`,
+      index + 1,
+    )
+  ));
+  properties[82].name = 'Color Inner';
+  properties[83].name = 'Color';
+  properties[83].matchName = 'PEDG2-0042';
+  templates.PEDG2 = new FakeEffect('PEDG2', 'Deep Glow 2', properties);
+
+  const group = new FakeLayer(57, '[G] Group', templates);
+  const root = new FakeLayer(58, 'Root', templates);
+  group.effects.addProperty('NGS_GroupControl');
+  const source = group.effects.addProperty('PEDG2');
+  const duplicate = source.property(83);
+  const colorInner = source.property(84);
+  duplicate.name = 'Color Inner';
+  duplicate.expressionName = 'Color';
+  duplicate.value = [0, 0, 0, 1];
+  colorInner.name = 'Color Inner';
+  colorInner.expressionName = 'Color';
+  colorInner.value = [1, 0, 0, 1];
+  const comp = new FakeComp([group, root]);
+  const resolver = {
+    layer(currentComp, name) {
+      const layer = currentComp.layersList.find((candidate) => candidate.name === name);
+      if (!layer) {
+        throw new Error(`Expression layer not found: ${name}`);
+      }
+      return layer;
+    },
+    effect(layer, name) {
+      const effect = layer.effects.items.find((candidate) => candidate.name === name);
+      if (!effect) {
+        throw new Error(`Expression Effect not found: ${name}`);
+      }
+      return effect;
+    },
+    property(container, identifier) {
+      if (typeof identifier === 'number') {
+        return container.items[identifier - 1] || (() => {
+          throw new Error(`Expression Property index not found: ${identifier}`);
+        })();
+      }
+
+      const propertyByExpressionName = container.items.find((candidate) => (
+        candidate.expressionName === identifier
+      ));
+      if (!propertyByExpressionName) {
+        throw new Error(`Expression Property name not found: ${identifier}`);
+      }
+      return propertyByExpressionName;
+    },
+  };
+
+  return { comp, group, root, source, resolver };
+}
+
 test('reserved Effect names round-trip and leave unreserved child Effects distinguishable', () => {
   const effectSync = loadEffectSync();
 
@@ -398,12 +489,55 @@ test('reserved Effect names round-trip and leave unreserved child Effects distin
   assert.equal(effectSync.parseReservedEffectName('[GFX:100:x] Gaussian Blur'), null);
 });
 
-test('Effect expressions address nested terminal parameters and escape layer or Effect names', () => {
+test('Effect expressions preserve string paths and render numeric property indexes', () => {
   const effectSync = loadEffectSync();
 
   assert.equal(
     effectSync.buildEffectExpressionPath('Group "One"', 'Blur "Two"', ['Controls', 'Amount']),
     'thisComp.layer("Group \\"One\\"").effect("Blur \\"Two\\"")("Controls")("Amount")',
+  );
+  assert.equal(
+    effectSync.buildEffectExpressionPath('Group', 'Blur', ['Controls', 84, 'Amount', 2]),
+    'thisComp.layer("Group").effect("Blur")("Controls")(84)("Amount")(2)',
+  );
+});
+
+test('sync resolves renamed duplicate display names through the generated numeric source path', () => {
+  const effectSync = loadEffectSync();
+  const { comp, group, root, source, resolver } = makeDeepGlowExpressionResolverFixture();
+  const oldExpression = effectSync.buildEffectExpressionPath(
+    group.name,
+    source.name,
+    ['Color Inner'],
+  );
+
+  assert.throws(
+    () => evaluateGeneratedExpression(oldExpression, comp, resolver),
+    /Expression Property name not found: Color Inner/,
+  );
+
+  effectSync.syncGroupEffects(group, [root]);
+  const copy = ownedEffects(root, group.id)[0];
+  const terminal = copy.property(84);
+  const generatedValue = evaluateGeneratedExpression(terminal.expression, comp, resolver);
+
+  assert.deepEqual(generatedValue, [1, 0, 0, 1]);
+  assert.equal(
+    terminal.expression,
+    'thisComp.layer("[G] Group").effect("Deep Glow 2")(84)',
+  );
+
+  source.property(84).name = 'Renamed Color Inner';
+  terminal.expression = oldExpression;
+  const additionsBeforeResync = root.effects.items.length;
+  effectSync.syncGroupEffects(group, [root]);
+
+  assert.equal(ownedEffects(root, group.id)[0], copy);
+  assert.equal(root.effects.items.length, additionsBeforeResync);
+  assert.deepEqual(evaluateGeneratedExpression(terminal.expression, comp, resolver), [1, 0, 0, 1]);
+  assert.equal(
+    terminal.expression,
+    'thisComp.layer("[G] Group").effect("Deep Glow 2")(84)',
   );
 });
 
@@ -444,7 +578,7 @@ test('structural sync adds ordinary copies only to the current target roots and 
   assert.equal(rootCopy.property(1).expressionEnabled, true);
   assert.equal(
     rootCopy.property(1).expression,
-    'thisComp.layer("[G] Group").effect("Gaussian Blur")("Blurriness")',
+    'thisComp.layer("[G] Group").effect("Gaussian Blur")(1)',
   );
 
   rootCopy.property(1).setValueCalls = 0;
@@ -474,7 +608,7 @@ test('structural diff handles Effect addition, rename, and deletion without dele
   effectSync.syncGroupEffects(group, [root, child]);
   assert.equal(
     root.effects.property('[GFX:100:3] Tint Updated').property('Tint Controls').property('Amount').expression,
-    'thisComp.layer("[G] Group").effect("Tint Updated")("Tint Controls")("Amount")',
+    'thisComp.layer("[G] Group").effect("Tint Updated")(1)(1)',
   );
 
   group.effects.remove(blur);
