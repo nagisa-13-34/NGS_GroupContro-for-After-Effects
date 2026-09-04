@@ -43,6 +43,7 @@ class FakeProperty {
     this.value = value;
     this.items = children;
     this.canSetExpression = options.canSetExpression !== false;
+    this.metrics = options.metrics || null;
     this._expressionEnabled = false;
     this.expressionEnabledWrites = 0;
     this._expression = '';
@@ -69,6 +70,9 @@ class FakeProperty {
   }
 
   get numProperties() {
+    if (this.metrics && this.items.length === 0) {
+      this.metrics.terminalVisits += 1;
+    }
     return this.items.length;
   }
 
@@ -91,7 +95,7 @@ class FakeProperty {
       this.name,
       Array.isArray(this.value) ? this.value.slice() : this.value,
       this.items.map((item) => item.clone()),
-      { canSetExpression: this.canSetExpression },
+      { canSetExpression: this.canSetExpression, metrics: this.metrics },
     );
   }
 }
@@ -136,9 +140,11 @@ class FakeEffect {
 }
 
 class FakeEffects {
-  constructor(templates) {
+  constructor(templates, options = {}) {
     this.items = [];
     this.templates = templates;
+    this.metrics = options.metrics || null;
+    this.invalidateEffectRefs = options.invalidateEffectRefs === true;
   }
 
   get numProperties() {
@@ -146,6 +152,9 @@ class FakeEffects {
   }
 
   property(identifier) {
+    if (this.metrics) {
+      this.metrics.effectPropertyAccesses += 1;
+    }
     if (typeof identifier === 'number') {
       return this.items[identifier - 1] || null;
     }
@@ -154,9 +163,20 @@ class FakeEffects {
   }
 
   addProperty(matchName) {
+    if (this.metrics) {
+      this.metrics.addPropertyCalls += 1;
+    }
     const template = this.templates[matchName];
     if (!template) {
       throw new Error(`No fake Effect template for ${matchName}`);
+    }
+
+    if (this.invalidateEffectRefs) {
+      this.items = this.items.map((existing) => {
+        const replacement = existing.clone();
+        replacement.effects = this;
+        return replacement;
+      });
     }
 
     const effect = template.clone();
@@ -166,9 +186,19 @@ class FakeEffects {
   }
 
   remove(effect) {
+    if (this.metrics) {
+      this.metrics.removePropertyCalls += 1;
+    }
     const index = this.items.indexOf(effect);
     if (index >= 0) {
       this.items.splice(index, 1);
+      if (this.invalidateEffectRefs) {
+        this.items = this.items.map((existing) => {
+          const replacement = existing.clone();
+          replacement.effects = this;
+          return replacement;
+        });
+      }
     }
   }
 }
@@ -178,7 +208,8 @@ class FakeLayer {
     this.id = id;
     this.name = name;
     this.parent = options.parent || null;
-    this.effects = new FakeEffects(templates);
+    this.comp = null;
+    this.effects = new FakeEffects(templates, options);
     this.transform = new FakeProperty('ADBE Transform Group', 'Transform', null, [
       new FakeProperty('ADBE Position', 'Position', [10, 20]),
       new FakeProperty('ADBE Scale', 'Scale', [100, 100]),
@@ -195,19 +226,52 @@ class FakeLayer {
     }
     return null;
   }
+
+  get index() {
+    return this.comp ? this.comp.layersList.indexOf(this) + 1 : 0;
+  }
 }
 
-function makeEffectTemplates() {
+class FakeComp {
+  constructor(layers, metrics = null) {
+    this.layersList = layers;
+    this.metrics = metrics;
+    for (const layer of layers) {
+      layer.comp = this;
+    }
+  }
+
+  get numLayers() {
+    return this.layersList.length;
+  }
+
+  layer(index) {
+    if (this.metrics) {
+      this.metrics.layerAccesses += 1;
+    }
+    return this.layersList[index - 1] || null;
+  }
+
+  removeLayer(layer) {
+    const index = this.layersList.indexOf(layer);
+    if (index >= 0) {
+      this.layersList.splice(index, 1);
+      layer.comp = null;
+    }
+  }
+}
+
+function makeEffectTemplates(metrics = null) {
   return {
     NGS_GroupControl: new FakeEffect(
       'NGS_GroupControl',
       'Group Control',
-      [new FakeProperty('NGS_GroupControl-0001', 'Layer Count', 2)],
+      [new FakeProperty('NGS_GroupControl-0001', 'Layer Count', 2, [], { metrics })],
     ),
     'ADBE Gaussian Blur 2': new FakeEffect(
       'ADBE Gaussian Blur 2',
       'Gaussian Blur',
-      [new FakeProperty('ADBE Blurriness', 'Blurriness', 25)],
+      [new FakeProperty('ADBE Blurriness', 'Blurriness', 25, [], { metrics })],
     ),
     'ADBE Tint': new FakeEffect(
       'ADBE Tint',
@@ -216,19 +280,23 @@ function makeEffectTemplates() {
         'ADBE Tint-0001',
         'Tint Controls',
         null,
-        [new FakeProperty('ADBE Tint-Amount', 'Amount', 50)],
+        [new FakeProperty('ADBE Tint-Amount', 'Amount', 50, [], { metrics })],
+        { metrics },
       )],
     ),
   };
 }
 
-function makeFixture() {
-  const templates = makeEffectTemplates();
-  const outside = new FakeLayer(900, 'Outside', templates);
-  const group = new FakeLayer(100, '[G] Group', templates);
-  const root = new FakeLayer(101, 'Root', templates);
-  const child = new FakeLayer(102, 'Child', templates, { parent: root });
-  const external = new FakeLayer(103, 'External Parent Child', templates, { parent: outside });
+function makeFixture({ metrics = null } = {}) {
+  const templates = makeEffectTemplates(metrics);
+  const outside = new FakeLayer(900, 'Outside', templates, { metrics });
+  const group = new FakeLayer(100, '[G] Group', templates, { metrics });
+  const root = new FakeLayer(101, 'Root', templates, { metrics });
+  const child = new FakeLayer(102, 'Child', templates, { parent: root, metrics });
+  const external = new FakeLayer(103, 'External Parent Child', templates, {
+    parent: outside,
+    metrics,
+  });
 
   group.effects.addProperty('NGS_GroupControl');
   const blur = group.effects.addProperty('ADBE Gaussian Blur 2');
@@ -242,6 +310,63 @@ function makeFixture() {
     outside,
     blur,
   };
+}
+
+function makeMetrics() {
+  return {
+    layerAccesses: 0,
+    effectPropertyAccesses: 0,
+    addPropertyCalls: 0,
+    removePropertyCalls: 0,
+    terminalVisits: 0,
+  };
+}
+
+function makeIncrementalSession(effectSync, groups, overrides = {}) {
+  const options = {
+    isGroupLayer: (layer) => groups.includes(layer),
+    getTargetRange: (group, comp) => ({
+      startIndex: group.index + 1,
+      endIndex: Math.min(group.index + (group.targetCount || 0), comp.numLayers),
+    }),
+    maxDiscoveryLayers: 16,
+    maxTargetLayers: 2,
+    timeBudgetMs: 12,
+    now: () => 0,
+    ...overrides,
+  };
+
+  return effectSync.createIncrementalSession(options);
+}
+
+function driveSession(session, comp, projectId, predicate, maxSteps = 160) {
+  for (let index = 0; index < maxSteps; index += 1) {
+    session.step(comp, { projectId });
+    if (predicate()) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function makeBasicSessionFixture({
+  metrics,
+  groupId = 100,
+  rootId = 101,
+  targetCount = 1,
+  sourceMatchName = 'ADBE Gaussian Blur 2',
+  sourceName = 'Gaussian Blur',
+} = {}) {
+  const templates = makeEffectTemplates(metrics);
+  const group = new FakeLayer(groupId, `[G] ${groupId}`, templates, { metrics });
+  const root = new FakeLayer(rootId, `Root ${rootId}`, templates, { metrics });
+  group.targetCount = targetCount;
+  group.effects.addProperty('NGS_GroupControl');
+  const source = group.effects.addProperty(sourceMatchName);
+  source.name = sourceName;
+  const comp = new FakeComp([group, root], metrics);
+  return { comp, group, root, source, templates };
 }
 
 function ownedEffects(layer, groupId) {
@@ -296,9 +421,9 @@ test('source Effect enumeration excludes only NGS_GroupControl and preserves the
   );
 });
 
-test('structural sync adds ordinary copies to eligible roots and internal children, links values by Expression, and protects local Effects', () => {
+test('structural sync adds ordinary copies only to the current target roots and internal children', () => {
   const effectSync = loadEffectSync();
-  const { group, root, child, external, blur } = makeFixture();
+  const { group, root, child, external, outside, blur } = makeFixture();
   const localEffect = root.effects.addProperty('ADBE Gaussian Blur 2');
   const transformBefore = [
     snapshotTransform(root),
@@ -311,6 +436,7 @@ test('structural sync adds ordinary copies to eligible roots and internal childr
   assert.equal(ownedEffects(root, 100).length, 1);
   assert.equal(ownedEffects(child, 100).length, 1);
   assert.equal(ownedEffects(external, 100).length, 0);
+  assert.equal(ownedEffects(outside, 100).length, 0);
   assert.equal(root.effects.items.includes(localEffect), true);
 
   const rootCopy = ownedEffects(root, 100)[0];
@@ -364,7 +490,8 @@ test('repeating an unchanged sync does not write mirrored Effect state again', (
   const effectSync = loadEffectSync();
   const { group, root, child } = makeFixture();
 
-  effectSync.syncGroupEffects(group, [root, child]);
+  const firstSync = effectSync.syncGroupEffects(group, [root, child]);
+  assert.equal(firstSync.createdCount, 2);
   const rootCopy = ownedEffects(root, 100)[0];
   const terminal = rootCopy.property(1);
   const writesAfterFirstSync = {
@@ -373,13 +500,34 @@ test('repeating an unchanged sync does not write mirrored Effect state again', (
     expressionEnabled: terminal.expressionEnabledWrites,
   };
 
-  effectSync.syncGroupEffects(group, [root, child]);
+  const secondSync = effectSync.syncGroupEffects(group, [root, child]);
+
+  assert.equal(secondSync.createdCount, 0);
+  assert.equal(secondSync.removedCount, 0);
+  assert.equal(root.effects.items.includes(rootCopy), true);
 
   assert.deepEqual({
     name: rootCopy.nameWrites,
     expression: terminal.expressionWrites,
     expressionEnabled: terminal.expressionEnabledWrites,
   }, writesAfterFirstSync);
+});
+
+test('sync removes duplicate owned copies while reusing one current copy', () => {
+  const effectSync = loadEffectSync();
+  const { group, root } = makeFixture();
+
+  effectSync.syncGroupEffects(group, [root]);
+  const firstCopy = ownedEffects(root, 100)[0];
+  const duplicate = root.effects.addProperty('ADBE Gaussian Blur 2');
+  duplicate.name = '[GFX:100:2] Gaussian Blur';
+
+  const result = effectSync.syncGroupEffects(group, [root]);
+
+  assert.equal(result.createdCount, 0);
+  assert.equal(result.removedCount, 1);
+  assert.equal(ownedEffects(root, 100).length, 1);
+  assert.equal(root.effects.items.includes(firstCopy), true);
 });
 
 test('Ungroup cleanup removes only Group Control-owned copies and preserves every unreserved child Effect', () => {
@@ -396,4 +544,244 @@ test('Ungroup cleanup removes only Group Control-owned copies and preserves ever
   assert.equal(root.effects.items.includes(localRootEffect), true);
   assert.equal(ownedEffects(root, 100).length, 0);
   assert.equal(ownedEffects(child, 100).length, 0);
+});
+
+test('incremental session enforces global work caps and does not rescan stable terminal trees', () => {
+  const effectSync = loadEffectSync();
+  const metrics = makeMetrics();
+  const { group, root, child } = makeFixture({ metrics });
+  const comp = new FakeComp([group, root, child], metrics);
+  group.targetCount = 2;
+
+  const session = effectSync.createIncrementalSession({
+    isGroupLayer: (layer) => layer === group,
+    getTargetRange: (currentGroup, currentComp) => ({
+      startIndex: currentGroup.index + 1,
+      endIndex: Math.min(currentGroup.index + currentGroup.targetCount, currentComp.numLayers),
+    }),
+    maxDiscoveryLayers: 16,
+    maxTargetLayers: 2,
+    timeBudgetMs: 12,
+    now: () => 0,
+  });
+
+  const stats = [];
+  for (let index = 0; index < 8; index += 1) {
+    session.step(comp, { projectId: 'project-a' });
+    stats.push(session.getStats().lastTick);
+  }
+
+  assert.ok(stats.every((tick) => tick.discoveryLayers <= 16));
+  assert.ok(stats.every((tick) => tick.targetLayers <= 2));
+  assert.equal(ownedEffects(root, 100).length, 1);
+  assert.equal(ownedEffects(child, 100).length, 1);
+
+  const terminalVisitsAfterFirstSync = metrics.terminalVisits;
+  for (let index = 0; index < 4; index += 1) {
+    session.step(comp, { projectId: 'project-a' });
+    const tick = session.getStats().lastTick;
+    assert.ok(tick.discoveryLayers <= 16);
+    assert.ok(tick.targetLayers <= 2);
+  }
+
+  assert.equal(metrics.terminalVisits, terminalVisitsAfterFirstSync);
+  assert.ok(metrics.layerAccesses > 0);
+});
+
+test('incremental audit repairs a disabled Expression without recreating a stable copy', () => {
+  const effectSync = loadEffectSync();
+  const metrics = makeMetrics();
+  const { comp, group, root } = makeBasicSessionFixture({ metrics, targetCount: 1 });
+  let currentTime = 0;
+  const session = makeIncrementalSession(effectSync, [group], {
+    auditIntervalMs: 100,
+    discoveryIntervalMs: 100000,
+    now: () => currentTime,
+  });
+
+  const synchronized = driveSession(
+    session,
+    comp,
+    'project-a',
+    () => ownedEffects(root, group.id).length === 1,
+  );
+  assert.equal(synchronized, true);
+
+  const caughtUp = driveSession(
+    session,
+    comp,
+    'project-a',
+    () => session.getStats().pending === false,
+  );
+  assert.equal(caughtUp, true);
+
+  const copy = ownedEffects(root, group.id)[0];
+  const terminal = copy.property(1);
+  const addsBeforeAudit = metrics.addPropertyCalls;
+  const removesBeforeAudit = metrics.removePropertyCalls;
+  terminal.expressionEnabled = false;
+  currentTime = 101;
+
+  const repaired = driveSession(
+    session,
+    comp,
+    'project-a',
+    () => terminal.expressionEnabled === true,
+    8,
+  );
+
+  assert.equal(repaired, true);
+  assert.equal(metrics.addPropertyCalls, addsBeforeAudit);
+  assert.equal(metrics.removePropertyCalls, removesBeforeAudit);
+  assert.equal(ownedEffects(root, group.id).length, 1);
+  assert.equal(session.getStats().pending, false);
+});
+
+test('incremental session converges when a Group has no target range', () => {
+  const effectSync = loadEffectSync();
+  const { comp, group } = makeBasicSessionFixture({ targetCount: 0 });
+  const session = makeIncrementalSession(effectSync, [group]);
+
+  for (let index = 0; index < 8; index += 1) {
+    session.step(comp, { projectId: 'project-a' });
+  }
+
+  assert.equal(session.getStats().pending, false);
+});
+
+test('incremental rediscovery retains a live Group moved before its scan cursor', () => {
+  const effectSync = loadEffectSync();
+  const templates = makeEffectTemplates();
+  const group = new FakeLayer(100, '[G] Moving Group', templates);
+  const root = new FakeLayer(101, 'Moving Root', templates);
+  const fillers = Array.from({ length: 19 }, (_, index) => (
+    new FakeLayer(500 + index, `Filler ${index}`, templates)
+  ));
+  const comp = new FakeComp([...fillers, group, root]);
+  group.targetCount = 1;
+  group.effects.addProperty('NGS_GroupControl');
+  group.effects.addProperty('ADBE Gaussian Blur 2');
+
+  let currentTime = 0;
+  const session = makeIncrementalSession(effectSync, [group], {
+    maxDiscoveryLayers: 4,
+    discoveryIntervalMs: 10,
+    now: () => currentTime,
+  });
+  const synchronized = driveSession(
+    session,
+    comp,
+    'project-a',
+    () => ownedEffects(root, group.id).length === 1,
+  );
+  assert.equal(synchronized, true);
+
+  // Finish the initial discovery so the next bounded scan is a new
+  // generation with the Group still at its old, late index.
+  session.step(comp, { projectId: 'project-a' });
+  currentTime = 20;
+
+  for (let index = 0; index < 4; index += 1) {
+    session.step(comp, { projectId: 'project-a' });
+  }
+  comp.layersList.splice(comp.layersList.indexOf(group), 1);
+  comp.layersList.splice(0, 0, group);
+  comp.layersList.splice(comp.layersList.indexOf(root), 1);
+  comp.layersList.splice(1, 0, root);
+
+  for (let index = 0; index < 70; index += 1) {
+    session.step(comp, { projectId: 'project-a' });
+  }
+
+  assert.equal(ownedEffects(root, group.id).length, 1);
+});
+
+test('incremental session caps real Layer access and addProperty work across many groups', () => {
+  const effectSync = loadEffectSync();
+  const metrics = makeMetrics();
+  const templates = makeEffectTemplates(metrics);
+  const firstGroup = new FakeLayer(100, '[G] First', templates, { metrics });
+  const firstTargets = Array.from({ length: 24 }, (_, index) => (
+    new FakeLayer(101 + index, `First ${index}`, templates, { metrics })
+  ));
+  const secondGroup = new FakeLayer(200, '[G] Second', templates, { metrics });
+  const secondTargets = Array.from({ length: 24 }, (_, index) => (
+    new FakeLayer(201 + index, `Second ${index}`, templates, { metrics })
+  ));
+  const filler = Array.from({ length: 100 }, (_, index) => (
+    new FakeLayer(500 + index, `Filler ${index}`, templates, { metrics })
+  ));
+  const layers = [firstGroup, ...firstTargets, ...filler, secondGroup, ...secondTargets];
+  const comp = new FakeComp(layers, metrics);
+
+  firstGroup.targetCount = firstTargets.length;
+  secondGroup.targetCount = secondTargets.length;
+  firstGroup.effects.addProperty('NGS_GroupControl');
+  firstGroup.effects.addProperty('ADBE Gaussian Blur 2');
+  secondGroup.effects.addProperty('NGS_GroupControl');
+  secondGroup.effects.addProperty('ADBE Tint');
+
+  const session = effectSync.createIncrementalSession({
+    isGroupLayer: (layer) => layer === firstGroup || layer === secondGroup,
+    getTargetRange: (group, currentComp) => ({
+      startIndex: group.index + 1,
+      endIndex: Math.min(group.index + group.targetCount, currentComp.numLayers),
+    }),
+    maxDiscoveryLayers: 16,
+    maxTargetLayers: 2,
+    timeBudgetMs: 12,
+    now: () => 0,
+  });
+
+  let firstSyncComplete = false;
+  for (let tickIndex = 0; tickIndex < 220; tickIndex += 1) {
+    const layerAccessesBefore = metrics.layerAccesses;
+    const addsBefore = metrics.addPropertyCalls;
+    session.step(comp, { projectId: 'project-a' });
+    const tick = session.getStats().lastTick;
+    const layerAccessDelta = metrics.layerAccesses - layerAccessesBefore;
+    const addPropertyDelta = metrics.addPropertyCalls - addsBefore;
+
+    assert.ok(layerAccessDelta <= 20, `Layer access budget exceeded: ${layerAccessDelta}`);
+    assert.ok(addPropertyDelta <= 2, `addProperty budget exceeded: ${addPropertyDelta}`);
+    assert.ok(tick.discoveryLayers <= 16);
+    assert.ok(tick.targetLayers <= 2);
+
+    if (
+      firstTargets.every((layer) => ownedEffects(layer, 100).length === 1)
+      && secondTargets.every((layer) => ownedEffects(layer, 200).length === 1)
+    ) {
+      firstSyncComplete = true;
+      break;
+    }
+  }
+
+  assert.equal(firstSyncComplete, true);
+  assert.equal(
+    firstTargets.filter((layer) => ownedEffects(layer, 100).length === 1).length,
+    firstTargets.length,
+  );
+  assert.equal(
+    secondTargets.filter((layer) => ownedEffects(layer, 200).length === 1).length,
+    secondTargets.length,
+  );
+  assert.ok(metrics.layerAccesses < layers.length * 4);
+});
+
+test('sync reacquires indexed Effect entries after addProperty invalidates prior references', () => {
+  const effectSync = loadEffectSync();
+  const templates = makeEffectTemplates();
+  const group = new FakeLayer(100, '[G] Group', templates, { invalidateEffectRefs: true });
+  const root = new FakeLayer(101, 'Root', templates, { invalidateEffectRefs: true });
+  const comp = new FakeComp([group, root]);
+
+  group.effects.addProperty('NGS_GroupControl');
+  group.effects.addProperty('ADBE Gaussian Blur 2');
+  group.effects.addProperty('ADBE Tint');
+  effectSync.syncGroupEffects(group, [root]);
+
+  assert.equal(ownedEffects(root, 100).length, 2);
+  assert.notEqual(root.effects.property('[GFX:100:2] Gaussian Blur'), null);
+  assert.notEqual(root.effects.property('[GFX:100:3] Tint'), null);
+  assert.equal(root.effects.items.some((effect) => effect.name === 'Gaussian Blur'), false);
 });

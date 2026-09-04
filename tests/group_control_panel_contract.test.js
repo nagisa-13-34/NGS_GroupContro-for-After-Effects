@@ -35,6 +35,8 @@ test('Group Control panel exposes the ScriptUI and adapter contract', () => {
   assert.match(source, /function\s+GroupControlEffectWatcherStart\s*\(/);
   assert.match(source, /function\s+GroupControlEffectWatcherStop\s*\(/);
   assert.match(source, /function\s+GroupControlEffectWatcherTick\s*\(/);
+  assert.match(source, /function\s+GroupControlEffectWatcherRunOnce\s*\(/);
+  assert.match(source, /function\s+GroupControlEffectWatcherGetStats\s*\(/);
 
   assert.match(source, /instanceof\s+Panel/);
   assert.match(source, /new\s+Window\s*\(\s*["']palette["']/);
@@ -48,11 +50,22 @@ test('Group Control panel exposes the ScriptUI and adapter contract', () => {
   assert.match(source, /ADBE Transform Group/);
   assert.match(source, /GroupControlCore\.clampLayerCount/);
   assert.match(source, /GroupControlEffectSync\.(?:syncGroupEffects|removeOwnedEffects)\s*\(/);
+  assert.match(source, /GroupControlEffectSync\.createIncrementalSession\s*\(/);
+  assert.match(source, /getTargetRange\s*:\s*getGroupEffectWatcherTargetRange/);
+  assert.match(source, /maxDiscoveryLayers\s*:\s*16/);
+  assert.match(source, /maxTargetLayers\s*:\s*2/);
+  assert.match(source, /timeBudgetMs\s*:\s*12/);
+  assert.match(source, /session\.step\s*\(\s*comp\s*,\s*\{\s*projectId\s*:\s*project\s*\}\s*\)/);
   assert.match(source, /GROUP_CONTROL_EFFECT_SYNC_INTERVAL_MS\s*=\s*200/);
-  assert.match(source, /app\.scheduleTask\s*\(\s*["']GroupControlEffectWatcherTick\(\)["']\s*,\s*GROUP_CONTROL_EFFECT_SYNC_INTERVAL_MS\s*,\s*false\s*\)/);
+  assert.match(source, /app\.scheduleTask\s*\(\s*["']GroupControlEffectWatcherTick\(\s*["']\s*\+\s*groupControlEffectWatcherState\.generation\s*\+\s*["']\s*\)["']\s*,\s*GROUP_CONTROL_EFFECT_SYNC_INTERVAL_MS\s*,\s*false\s*\)/);
   assert.match(source, /app\.cancelTask\s*\(/);
   assert.match(source, /function\s+buildUI[\s\S]*GroupControlEffectWatcherStart\s*\(\)/);
-  assert.match(source, /panel\.onClose\s*=\s*function[\s\S]*GroupControlEffectWatcherStop\s*\(\)/);
+  assert.match(source, /panel\.onClose\s*=\s*function[\s\S]*GroupControlEffectWatcherStop\s*\(/);
+
+  const watcherStart = source.indexOf('function runGroupEffectWatcherOnce');
+  const watcherEnd = source.indexOf('function getLayerId');
+  assert.ok(watcherStart >= 0 && watcherEnd > watcherStart);
+  assert.doesNotMatch(source.slice(watcherStart, watcherEnd), /syncAllGroupEffects\s*\(/);
 });
 
 test('Group Control panel keeps fixed safety messages and one undo group per action', () => {

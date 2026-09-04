@@ -37,9 +37,74 @@ var STATUS_UNGROUP_COMPLETE = "Ungroup完了。";
 
 var groupControlUI = null;
 var GROUP_CONTROL_EFFECT_SYNC_INTERVAL_MS = 200;
-var groupControlEffectWatcherActive = false;
-var groupControlEffectWatcherTaskId = null;
-var groupControlEffectWatcherTicking = false;
+var GROUP_CONTROL_EFFECT_WATCHER_STATE_KEY = "__NGS_GroupControlEffectWatcherState";
+var groupControlEffectWatcherRuntimeToken = {};
+var groupControlEffectWatcherStateGlobal = this;
+var groupControlEffectWatcherState = null;
+
+try {
+    if (typeof $ !== "undefined" && $ !== null &&
+            $.global !== null && typeof $.global !== "undefined") {
+        groupControlEffectWatcherStateGlobal = $.global;
+    }
+} catch (globalError) {
+    groupControlEffectWatcherStateGlobal = this;
+}
+
+if (groupControlEffectWatcherStateGlobal === null ||
+        typeof groupControlEffectWatcherStateGlobal !== "object") {
+    groupControlEffectWatcherStateGlobal = this;
+}
+
+if (typeof groupControlEffectWatcherStateGlobal[GROUP_CONTROL_EFFECT_WATCHER_STATE_KEY] === "undefined" ||
+        groupControlEffectWatcherStateGlobal[GROUP_CONTROL_EFFECT_WATCHER_STATE_KEY] === null) {
+    groupControlEffectWatcherStateGlobal[GROUP_CONTROL_EFFECT_WATCHER_STATE_KEY] = {
+        active: false,
+        taskId: null,
+        ticking: false,
+        session: null,
+        project: null,
+        comp: null,
+        owner: null,
+        generation: 0,
+        runtimeToken: null,
+        app: null
+    };
+}
+
+groupControlEffectWatcherState =
+    groupControlEffectWatcherStateGlobal[GROUP_CONTROL_EFFECT_WATCHER_STATE_KEY];
+
+if (typeof groupControlEffectWatcherState.active !== "boolean") {
+    groupControlEffectWatcherState.active = false;
+}
+if (typeof groupControlEffectWatcherState.taskId === "undefined") {
+    groupControlEffectWatcherState.taskId = null;
+}
+if (typeof groupControlEffectWatcherState.ticking !== "boolean") {
+    groupControlEffectWatcherState.ticking = false;
+}
+if (typeof groupControlEffectWatcherState.session === "undefined") {
+    groupControlEffectWatcherState.session = null;
+}
+if (typeof groupControlEffectWatcherState.project === "undefined") {
+    groupControlEffectWatcherState.project = null;
+}
+if (typeof groupControlEffectWatcherState.comp === "undefined") {
+    groupControlEffectWatcherState.comp = null;
+}
+if (typeof groupControlEffectWatcherState.owner === "undefined") {
+    groupControlEffectWatcherState.owner = null;
+}
+if (typeof groupControlEffectWatcherState.generation !== "number") {
+    groupControlEffectWatcherState.generation = 0;
+}
+if (typeof groupControlEffectWatcherState.runtimeToken === "undefined") {
+    groupControlEffectWatcherState.runtimeToken = null;
+}
+if (typeof groupControlEffectWatcherState.app === "undefined") {
+    groupControlEffectWatcherState.app = null;
+}
 
 function makeFailure(status) {
     return {
@@ -72,7 +137,8 @@ function setStatusText(status) {
 function getActiveComp() {
     var item;
 
-    if (typeof app === "undefined" || app === null || app.project === null) {
+    if (typeof app === "undefined" || app === null ||
+            app.project === null || typeof app.project === "undefined") {
         return null;
     }
 
@@ -410,88 +476,356 @@ function syncAllGroupEffects(comp) {
     cleanupOrphanedGroupEffects(compLayers, liveGroupIds);
 }
 
-function scheduleGroupEffectWatcher() {
-    var taskId;
+function makeEmptyGroupEffectWatcherTickStats() {
+    return {
+        discoveryLayers: 0,
+        targetLayers: 0,
+        terminalVisits: 0,
+        terminalCount: 0,
+        createdCount: 0,
+        removedCount: 0,
+        skippedTargets: 0,
+        errors: 0,
+        pending: false,
+        elapsedMs: 0
+    };
+}
 
-    if (!groupControlEffectWatcherActive ||
-            groupControlEffectWatcherTaskId !== null) {
-        return;
-    }
+function makeEmptyGroupEffectWatcherStats() {
+    var stats = makeEmptyGroupEffectWatcherTickStats();
 
-    if (typeof app === "undefined" || app === null ||
-            typeof app.scheduleTask !== "function") {
-        return;
-    }
+    return {
+        lastTick: stats,
+        totals: {
+            discoveryLayers: 0,
+            targetLayers: 0,
+            terminalVisits: 0,
+            terminalCount: 0,
+            createdCount: 0,
+            removedCount: 0,
+            skippedTargets: 0,
+            errors: 0,
+            pending: false,
+            elapsedMs: 0,
+            ticks: 0
+        },
+        pending: false
+    };
+}
 
-    try {
-        taskId = app.scheduleTask("GroupControlEffectWatcherTick()",
-            GROUP_CONTROL_EFFECT_SYNC_INTERVAL_MS, false);
-        if (taskId !== null && typeof taskId !== "undefined") {
-            groupControlEffectWatcherTaskId = taskId;
+function getGroupEffectWatcherStats() {
+    var session = groupControlEffectWatcherState.session;
+
+    if (session !== null && typeof session !== "undefined" &&
+            typeof session.getStats === "function") {
+        try {
+            return session.getStats();
+        } catch (statsError) {
+            /* Return an empty snapshot if the host invalidated the session. */
         }
-    } catch (scheduleError) {
-        groupControlEffectWatcherTaskId = null;
     }
+
+    return makeEmptyGroupEffectWatcherStats();
 }
 
-function GroupControlEffectWatcherTick() {
-    var comp;
-
-    if (!groupControlEffectWatcherActive || groupControlEffectWatcherTicking) {
-        return;
+function getGroupEffectWatcherApp() {
+    if (typeof app !== "undefined" && app !== null) {
+        return app;
     }
 
-    /* The current scheduleTask invocation is one-shot and has now fired. */
-    groupControlEffectWatcherTaskId = null;
-    groupControlEffectWatcherTicking = true;
+    return groupControlEffectWatcherState.app;
+}
 
-    try {
-        comp = getActiveComp();
-        if (comp !== null) {
-            syncAllGroupEffects(comp);
+function getGroupEffectWatcherProject() {
+    var hostApp = getGroupEffectWatcherApp();
+
+    if (hostApp === null || typeof hostApp === "undefined" ||
+            hostApp.project === null || typeof hostApp.project === "undefined") {
+        return null;
+    }
+
+    return hostApp.project;
+}
+
+function resetGroupEffectWatcherSession(discardSession) {
+    var session = groupControlEffectWatcherState.session;
+
+    if (session !== null && typeof session !== "undefined" &&
+            typeof session.reset === "function") {
+        try {
+            session.reset();
+        } catch (resetError) {
+            /* A stale host object must not stop the watcher lifecycle. */
         }
-    } catch (watcherError) {
-        /* Keep the watcher alive when the active composition changes mid-tick. */
-    } finally {
-        groupControlEffectWatcherTicking = false;
-        scheduleGroupEffectWatcher();
+    }
+
+    groupControlEffectWatcherState.comp = null;
+    groupControlEffectWatcherState.project = null;
+    if (discardSession === true) {
+        groupControlEffectWatcherState.session = null;
     }
 }
 
-function startGroupEffectWatcher() {
-    if (groupControlEffectWatcherActive) {
+function cancelGroupEffectWatcherTask() {
+    var taskId = groupControlEffectWatcherState.taskId;
+    var hostApp = groupControlEffectWatcherState.app;
+
+    groupControlEffectWatcherState.taskId = null;
+    if (taskId === null || typeof taskId === "undefined") {
         return;
     }
 
-    groupControlEffectWatcherActive = true;
-    GroupControlEffectWatcherTick();
-}
+    if (hostApp === null || typeof hostApp === "undefined") {
+        hostApp = getGroupEffectWatcherApp();
+    }
 
-function stopGroupEffectWatcher() {
-    var taskId = groupControlEffectWatcherTaskId;
-
-    groupControlEffectWatcherActive = false;
-    groupControlEffectWatcherTaskId = null;
-
-    if (taskId === null || typeof taskId === "undefined" ||
-            typeof app === "undefined" || app === null ||
-            typeof app.cancelTask !== "function") {
+    if (hostApp === null || typeof hostApp === "undefined" ||
+            typeof hostApp.cancelTask !== "function") {
         return;
     }
 
     try {
-        app.cancelTask(taskId);
+        if (typeof app !== "undefined" && app !== null &&
+                typeof app.cancelTask === "function" && hostApp === app) {
+            app.cancelTask(taskId);
+        } else {
+            hostApp.cancelTask(taskId);
+        }
     } catch (cancelError) {
         /* A missing or already-completed task is safe to ignore. */
     }
 }
 
-function GroupControlEffectWatcherStart() {
-    startGroupEffectWatcher();
+function scheduleGroupEffectWatcher() {
+    var hostApp;
+    var taskId;
+
+    if (!groupControlEffectWatcherState.active ||
+            groupControlEffectWatcherState.runtimeToken !== groupControlEffectWatcherRuntimeToken ||
+            groupControlEffectWatcherState.taskId !== null) {
+        return;
+    }
+
+    hostApp = getGroupEffectWatcherApp();
+    if (hostApp === null || typeof hostApp === "undefined" ||
+            typeof hostApp.scheduleTask !== "function") {
+        return;
+    }
+
+    groupControlEffectWatcherState.app = hostApp;
+    try {
+        if (typeof app !== "undefined" && app !== null &&
+                typeof app.scheduleTask === "function" && hostApp === app) {
+            taskId = app.scheduleTask("GroupControlEffectWatcherTick(" +
+                groupControlEffectWatcherState.generation + ")",
+                GROUP_CONTROL_EFFECT_SYNC_INTERVAL_MS, false);
+        } else {
+            taskId = hostApp.scheduleTask("GroupControlEffectWatcherTick(" +
+                groupControlEffectWatcherState.generation + ")",
+                GROUP_CONTROL_EFFECT_SYNC_INTERVAL_MS, false);
+        }
+        if (taskId !== null && typeof taskId !== "undefined") {
+            groupControlEffectWatcherState.taskId = taskId;
+        }
+    } catch (scheduleError) {
+        groupControlEffectWatcherState.taskId = null;
+    }
 }
 
-function GroupControlEffectWatcherStop() {
-    stopGroupEffectWatcher();
+function getGroupEffectWatcherTargetRange(group, comp) {
+    var count = getLayerCount(group, comp);
+
+    return GroupControlCore.getTargetIndexRange(group.index, count, comp.numLayers);
+}
+
+function createGroupEffectWatcherSession() {
+    if (typeof GroupControlEffectSync === "undefined" ||
+            GroupControlEffectSync === null ||
+            typeof GroupControlEffectSync.createIncrementalSession !== "function") {
+        return null;
+    }
+
+    try {
+        return GroupControlEffectSync.createIncrementalSession({
+            isGroupLayer: isGroupLayer,
+            getTargetRange: getGroupEffectWatcherTargetRange,
+            maxDiscoveryLayers: 16,
+            maxTargetLayers: 2,
+            timeBudgetMs: 12,
+            now: function () {
+                return new Date().getTime();
+            }
+        });
+    } catch (sessionError) {
+        return null;
+    }
+}
+
+function ensureGroupEffectWatcherSession() {
+    if (groupControlEffectWatcherState.session === null ||
+            typeof groupControlEffectWatcherState.session === "undefined") {
+        groupControlEffectWatcherState.session = createGroupEffectWatcherSession();
+    }
+
+    return groupControlEffectWatcherState.session;
+}
+
+function isCurrentGroupEffectWatcherOwner(owner, allowInactive) {
+    if (groupControlEffectWatcherState.runtimeToken !== groupControlEffectWatcherRuntimeToken) {
+        return false;
+    }
+
+    if (owner !== null && typeof owner !== "undefined" &&
+            groupControlEffectWatcherState.owner !== owner) {
+        return false;
+    }
+
+    return allowInactive === true || groupControlEffectWatcherState.active;
+}
+
+function runGroupEffectWatcherOnce(owner, reschedule) {
+    var comp;
+    var project;
+    var session;
+    var tickStats;
+
+    if (!isCurrentGroupEffectWatcherOwner(owner, true) ||
+            groupControlEffectWatcherState.ticking) {
+        return getGroupEffectWatcherStats();
+    }
+
+    groupControlEffectWatcherState.ticking = true;
+    try {
+        comp = getActiveComp();
+        project = getGroupEffectWatcherProject();
+        if (comp === null || project === null) {
+            resetGroupEffectWatcherSession(false);
+            return getGroupEffectWatcherStats();
+        }
+
+        if (groupControlEffectWatcherState.comp !== comp ||
+                groupControlEffectWatcherState.project !== project) {
+            resetGroupEffectWatcherSession(false);
+            groupControlEffectWatcherState.comp = comp;
+            groupControlEffectWatcherState.project = project;
+        }
+
+        session = ensureGroupEffectWatcherSession();
+        if (session !== null && typeof session !== "undefined" &&
+                typeof session.step === "function") {
+            tickStats = session.step(comp, {projectId: project});
+        }
+    } catch (watcherError) {
+        /* Keep the one-shot watcher alive when the host changes mid-tick. */
+    } finally {
+        groupControlEffectWatcherState.ticking = false;
+        if (reschedule === true &&
+                isCurrentGroupEffectWatcherOwner(owner, false)) {
+            scheduleGroupEffectWatcher();
+        }
+    }
+
+    return tickStats || getGroupEffectWatcherStats();
+}
+
+function GroupControlEffectWatcherTick(generation) {
+    var owner = groupControlEffectWatcherState.owner;
+
+    if (generation !== null && typeof generation !== "undefined" &&
+            Number(generation) !== groupControlEffectWatcherState.generation) {
+        return getGroupEffectWatcherStats();
+    }
+
+    if (!isCurrentGroupEffectWatcherOwner(owner, false) ||
+            groupControlEffectWatcherState.ticking) {
+        return getGroupEffectWatcherStats();
+    }
+
+    /* The current scheduleTask invocation is one-shot and has now fired. */
+    groupControlEffectWatcherState.taskId = null;
+    return runGroupEffectWatcherOnce(owner, true);
+}
+
+function startGroupEffectWatcher() {
+    var hostApp;
+    var owner;
+
+    if (groupControlEffectWatcherState.active &&
+            groupControlEffectWatcherState.runtimeToken !== groupControlEffectWatcherRuntimeToken) {
+        cancelGroupEffectWatcherTask();
+        resetGroupEffectWatcherSession(true);
+        groupControlEffectWatcherState.active = false;
+        groupControlEffectWatcherState.ticking = false;
+        groupControlEffectWatcherState.owner = null;
+    } else if (!groupControlEffectWatcherState.active &&
+            groupControlEffectWatcherState.runtimeToken !== groupControlEffectWatcherRuntimeToken) {
+        resetGroupEffectWatcherSession(true);
+    }
+
+    if (groupControlEffectWatcherState.active) {
+        return groupControlEffectWatcherState.owner;
+    }
+
+    hostApp = getGroupEffectWatcherApp();
+    groupControlEffectWatcherState.active = true;
+    groupControlEffectWatcherState.runtimeToken = groupControlEffectWatcherRuntimeToken;
+    groupControlEffectWatcherState.app = hostApp;
+    groupControlEffectWatcherState.generation += 1;
+    owner = {
+        generation: groupControlEffectWatcherState.generation,
+        runtimeToken: groupControlEffectWatcherRuntimeToken
+    };
+    groupControlEffectWatcherState.owner = owner;
+    groupControlEffectWatcherState.ticking = false;
+
+    /* Startup performs exactly one bounded, unscheduled tick. */
+    runGroupEffectWatcherOnce(owner, false);
+    scheduleGroupEffectWatcher();
+    return owner;
+}
+
+function stopGroupEffectWatcher(owner) {
+    if (owner !== null && typeof owner !== "undefined" &&
+            groupControlEffectWatcherState.owner !== owner) {
+        return;
+    }
+
+    if (owner !== null && typeof owner !== "undefined" &&
+            groupControlEffectWatcherState.runtimeToken !== groupControlEffectWatcherRuntimeToken) {
+        return;
+    }
+
+    cancelGroupEffectWatcherTask();
+    groupControlEffectWatcherState.active = false;
+    groupControlEffectWatcherState.ticking = false;
+    resetGroupEffectWatcherSession(true);
+    groupControlEffectWatcherState.owner = null;
+    groupControlEffectWatcherState.runtimeToken = groupControlEffectWatcherRuntimeToken;
+}
+
+function GroupControlEffectWatcherStart() {
+    return startGroupEffectWatcher();
+}
+
+function GroupControlEffectWatcherStop(owner) {
+    stopGroupEffectWatcher(owner);
+}
+
+function GroupControlEffectWatcherRunOnce() {
+    if (!groupControlEffectWatcherState.active &&
+            groupControlEffectWatcherState.runtimeToken !== groupControlEffectWatcherRuntimeToken) {
+        cancelGroupEffectWatcherTask();
+        resetGroupEffectWatcherSession(true);
+        groupControlEffectWatcherState.runtimeToken = groupControlEffectWatcherRuntimeToken;
+        groupControlEffectWatcherState.owner = null;
+        groupControlEffectWatcherState.ticking = false;
+    }
+
+    return runGroupEffectWatcherOnce(null, false);
+}
+
+function GroupControlEffectWatcherGetStats() {
+    return getGroupEffectWatcherStats();
 }
 
 function getLayerId(layer) {
@@ -1689,6 +2023,7 @@ function buildUI(thisObj) {
     var createButton;
     var applyButton;
     var ungroupButton;
+    var watcherOwner;
 
     if (thisObj instanceof Panel) {
         panel = thisObj;
@@ -1758,7 +2093,7 @@ function buildUI(thisObj) {
     };
 
     panel.onClose = function () {
-        GroupControlEffectWatcherStop();
+        GroupControlEffectWatcherStop(watcherOwner);
     };
 
     panel.onResizing = panel.onResize = function () {
@@ -1766,7 +2101,7 @@ function buildUI(thisObj) {
     };
 
     refreshPanel();
-    GroupControlEffectWatcherStart();
+    watcherOwner = GroupControlEffectWatcherStart();
 
     if (panel instanceof Window) {
         panel.center();

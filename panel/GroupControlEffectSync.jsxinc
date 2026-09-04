@@ -446,6 +446,10 @@ var GroupControlEffectSync = (function () {
     function containsLayer(layers, wanted) {
         var index;
 
+        if (layers && typeof layers.contains === "function") {
+            return layers.contains(wanted);
+        }
+
         for (index = 0; index < layers.length; index += 1) {
             if (sameLayer(layers[index], wanted)) {
                 return true;
@@ -741,23 +745,32 @@ var GroupControlEffectSync = (function () {
         var effect;
         var info;
         var key;
+        var preservedMap = {};
 
-        for (index = count; index >= 1; index -= 1) {
+        index = 1;
+        while (index <= count) {
             effect = getCollectionItem(effects, index);
             info = getReservedInfo(effect);
             if (info === null || info.groupId !== groupId) {
+                index += 1;
                 continue;
             }
 
             key = String(info.effectIndex);
             if (keepMap !== null && typeof keepMap !== "undefined" &&
-                    hasOwn(keepMap, key) && keepMap[key] === effect) {
+                    hasOwn(keepMap, key) && !hasOwn(preservedMap, key)) {
+                preservedMap[key] = true;
+                index += 1;
                 continue;
             }
 
             if (removeEffect(effects, effect)) {
                 removedCount += 1;
+                count = getCollectionCount(effects);
+                continue;
             }
+
+            index += 1;
         }
 
         return removedCount;
@@ -907,6 +920,11 @@ var GroupControlEffectSync = (function () {
         var created;
         var key;
         var reservedName;
+        var sourceEffect;
+
+        for (recordIndex = 0; recordIndex < records.length; recordIndex += 1) {
+            keepMap[String(records[recordIndex].effectIndex)] = true;
+        }
 
         if (effects === null || typeof effects === "undefined" ||
                 sameLayer(layer, group)) {
@@ -918,6 +936,10 @@ var GroupControlEffectSync = (function () {
             return;
         }
 
+        // Remove obsolete/duplicate owned copies before additions. Do not keep
+        // Effect objects across indexed-group mutations: AE invalidates them.
+        stats.removedCount += removeOwnedFromEffects(effects, groupId, keepMap);
+
         for (recordIndex = 0; recordIndex < records.length; recordIndex += 1) {
             sourceRecord = records[recordIndex];
             key = String(sourceRecord.effectIndex);
@@ -926,12 +948,16 @@ var GroupControlEffectSync = (function () {
 
             if (copy !== null && getEffectMatchName(copy) !== sourceRecord.matchName) {
                 oldCopy = copy;
+                if (!removeEffect(effects, oldCopy)) {
+                    continue;
+                }
+                stats.removedCount += 1;
+                effects = getEffectsProperty(layer);
                 replacement = addEffectCopy(effects, sourceRecord);
+                copy = replacement;
                 if (replacement !== null) {
-                    copy = replacement;
                     created = true;
                     stats.createdCount += 1;
-                    stats.removedCount += removeEffect(effects, oldCopy) ? 1 : 0;
                 }
             } else if (copy === null) {
                 copy = addEffectCopy(effects, sourceRecord);
@@ -950,16 +976,15 @@ var GroupControlEffectSync = (function () {
             setEffectName(copy, reservedName);
 
             try {
-                syncPropertyTree(sourceRecord.effect, copy, String(group.name || ""),
+                sourceEffect = getCollectionItem(getEffectsProperty(group), sourceRecord.effectIndex);
+                syncPropertyTree(sourceEffect, copy, String(group.name || ""),
                     sourceRecord.sourceName, [], created, stats);
             } catch (propertySyncError) {
                 /* Continue with the next source Effect. */
             }
 
-            keepMap[key] = copy;
+            effects = getEffectsProperty(layer);
         }
-
-        stats.removedCount += removeOwnedFromEffects(effects, groupId, keepMap);
     }
 
     function syncGroupEffects(group, targetLayers) {
@@ -1030,12 +1055,341 @@ var GroupControlEffectSync = (function () {
         return result;
     }
 
+    /* The idle watcher never calls syncGroupEffects: it discovers a bounded
+     * slice, then visits individual current targets and cleanup Layers.
+     * All cursors and fingerprints belong to one comp/project session. */
+    function createIncrementalSession(options) {
+        var settings = options || {};
+        var clockNow = settings.now || function () { return new Date().getTime(); };
+        var activeComp = null;
+        var projectId = null;
+        var layerCount = 0;
+        var discoveryIndex = 1;
+        var cleanupIndex = 1;
+        var cleanupRemaining = 0;
+        var generation = 1;
+        var discovered = false;
+        var discoveryInProgress = true;
+        var nextDiscoveryAt = 0;
+        var groups = [];
+        var byId = {};
+        var groupIndex = 0;
+        var workSerial = 0;
+        var preferWork = false;
+        var lastTick = null;
+        var totals;
+
+        function limit(value, fallback) {
+            value = Number(value);
+            return isFinite(value) && value > 0 ? Math.max(1, Math.floor(value)) : fallback;
+        }
+
+        function emptyStats() {
+            return {discoveryLayers: 0, targetLayers: 0, terminalVisits: 0,
+                terminalCount: 0, createdCount: 0, removedCount: 0,
+                skippedTargets: 0, errors: 0, pending: false};
+        }
+
+        function reset() {
+            activeComp = null;
+            projectId = null;
+            layerCount = 0;
+            discoveryIndex = 1;
+            cleanupIndex = 1;
+            cleanupRemaining = 0;
+            generation = 1;
+            discovered = false;
+            discoveryInProgress = true;
+            nextDiscoveryAt = 0;
+            groups = [];
+            byId = {};
+            groupIndex = 0;
+            workSerial = 0;
+            preferWork = false;
+            lastTick = emptyStats();
+            totals = emptyStats();
+            totals.ticks = 0;
+        }
+
+        function readLayer(index) {
+            if (index < 1 || index > layerCount) { return null; }
+            try { return activeComp.layer(index); } catch (error) { return null; }
+        }
+
+        function isLiveGroup(entry) {
+            try {
+                return entry && getContainingComp(entry.layer) === activeComp &&
+                    settings.isGroupLayer(entry.layer);
+            } catch (error) { return false; }
+        }
+
+        function currentRange(entry) {
+            var range = settings.getTargetRange(entry.layer, activeComp);
+            var start = Math.max(Number(entry.layer.index) + 1, Number(range.startIndex));
+            var end = Math.min(layerCount, Number(range.endIndex));
+            if (!isFinite(start) || !isFinite(end)) { return {startIndex: 1, endIndex: 0}; }
+            return {startIndex: Math.max(1, Math.floor(start)), endIndex: Math.floor(end)};
+        }
+
+        function membership(range) {
+            return {contains: function (layer) {
+                try {
+                    return getContainingComp(layer) === activeComp &&
+                        layer.index >= range.startIndex && layer.index <= range.endIndex;
+                } catch (error) { return false; }
+            }};
+        }
+
+        function token(value) {
+            value = String(value);
+            return value.length + ":" + value;
+        }
+
+        function shallowSignature(layer, records) {
+            var parade = getEffectsProperty(layer);
+            var parts = [token(layer.name)];
+            var count = records ? records.length : getCollectionCount(parade);
+            var index;
+            var effect;
+            var record;
+            for (index = 0; index < count; index += 1) {
+                record = records ? records[index] : null;
+                effect = getCollectionItem(parade, record ? record.effectIndex : index + 1);
+                parts.push(token(record ? record.effectIndex : index + 1));
+                parts.push(token(getEffectName(effect)));
+                parts.push(token(getEffectMatchName(effect)));
+                parts.push(token(getCollectionCount(effect)));
+            }
+            return parts.join("|");
+        }
+
+        function discoverOne(stats) {
+            var layer = readLayer(discoveryIndex);
+            var id;
+            var entry;
+            var index;
+            stats.discoveryLayers += 1;
+            try {
+                if (layer && settings.isGroupLayer(layer)) {
+                    id = getLayerId(layer);
+                    if (id > 0) {
+                        entry = byId[getGroupKey(id)];
+                        if (!entry) {
+                            entry = {id: id, layer: layer, seen: generation, cursor: 0,
+                                rangeKey: "", sourceKey: "", remaining: 0, cache: {}};
+                            byId[getGroupKey(id)] = entry;
+                            groups.push(entry);
+                            cleanupRemaining = layerCount;
+                        }
+                        entry.layer = layer;
+                        entry.seen = generation;
+                    }
+                }
+            } catch (error) { stats.errors += 1; }
+            discoveryIndex += 1;
+            if (discoveryIndex > layerCount) {
+                for (index = groups.length - 1; index >= 0; index -= 1) {
+                    entry = groups[index];
+                    if (entry.seen !== generation) {
+                        if (isLiveGroup(entry)) {
+                            // A live Group may have moved into an index that
+                            // this generation already scanned. Keep its entry
+                            // and let targetOne refresh the current range.
+                            entry.seen = generation;
+                        } else {
+                            delete byId[getGroupKey(entry.id)];
+                            groups.splice(index, 1);
+                            cleanupRemaining = layerCount;
+                        }
+                    }
+                }
+                generation += 1;
+                discoveryIndex = 1;
+                discovered = true;
+                discoveryInProgress = false;
+                nextDiscoveryAt = clockNow() + limit(settings.discoveryIntervalMs, 1000);
+            }
+        }
+
+        function cleanupOne(stats) {
+            var layer = readLayer(cleanupIndex);
+            var parade;
+            var effect;
+            var info;
+            var entry;
+            var index;
+            var remove;
+            cleanupIndex = cleanupIndex >= layerCount ? 1 : cleanupIndex + 1;
+            if (!discovered || !layer) { return; }
+            parade = getEffectsProperty(layer);
+            for (index = getCollectionCount(parade); index >= 1; index -= 1) {
+                effect = getCollectionItem(parade, index);
+                info = getReservedInfo(effect);
+                if (!info) { continue; }
+                entry = byId[getGroupKey(info.groupId)];
+                remove = !isLiveGroup(entry);
+                if (!remove) {
+                    remove = !isEligibleTarget(entry.layer, membership(currentRange(entry)), layer);
+                }
+                if (remove && removeEffect(parade, effect)) {
+                    stats.removedCount += 1;
+                    parade = getEffectsProperty(layer);
+                }
+            }
+            cleanupRemaining = Math.max(0, cleanupRemaining - 1);
+        }
+
+        function targetOne(stats, time) {
+            var entry;
+            var range;
+            var rangeKey;
+            var layer;
+            var records;
+            var sourceKey;
+            var targetKey;
+            var cacheKey;
+            var cached;
+            var targets;
+            if (groupIndex >= groups.length) { groupIndex = 0; }
+            entry = groups[groupIndex];
+            groupIndex += 1;
+            if (!isLiveGroup(entry)) { return; }
+            range = currentRange(entry);
+            rangeKey = range.startIndex + ":" + range.endIndex;
+            if (entry.rangeKey !== rangeKey) {
+                entry.rangeKey = rangeKey;
+                entry.cursor = range.startIndex;
+                entry.remaining = Math.max(0, range.endIndex - range.startIndex + 1);
+                cleanupRemaining = layerCount;
+            }
+            if (range.endIndex < range.startIndex) { return; }
+            if (entry.cursor < range.startIndex || entry.cursor > range.endIndex) {
+                entry.cursor = range.startIndex;
+            }
+            layer = readLayer(entry.cursor);
+            entry.cursor += 1;
+            if (!layer) { return; }
+            targets = membership(range);
+            cacheKey = getGroupKey(getLayerId(layer));
+            if (!isEligibleTarget(entry.layer, targets, layer)) {
+                stats.removedCount += removeOwnedFromEffects(getEffectsProperty(layer), entry.id, null);
+                delete entry.cache[cacheKey];
+                entry.remaining = Math.max(0, entry.remaining - 1);
+                return;
+            }
+            records = getSourceRecords(entry.layer);
+            sourceKey = shallowSignature(entry.layer, records);
+            if (sourceKey !== entry.sourceKey) {
+                entry.sourceKey = sourceKey;
+                entry.remaining = range.endIndex - range.startIndex + 1;
+            }
+            targetKey = shallowSignature(layer, null);
+            cached = entry.cache[cacheKey];
+            if (cached && cached.sourceKey === sourceKey && cached.targetKey === targetKey &&
+                    time - cached.auditAt < limit(settings.auditIntervalMs, 5000)) {
+                stats.skippedTargets += 1;
+            } else {
+                syncTargetEffects(entry.layer, entry.id, targets, layer, records, stats);
+                entry.cache[cacheKey] = {sourceKey: sourceKey,
+                    targetKey: shallowSignature(layer, null), auditAt: time};
+            }
+            entry.remaining = Math.max(0, entry.remaining - 1);
+        }
+
+        function pending() {
+            var index;
+            if (!discovered || cleanupRemaining > 0) { return layerCount > 0; }
+            for (index = 0; index < groups.length; index += 1) {
+                if (groups[index].remaining > 0 || groups[index].cursor === 0) { return true; }
+            }
+            return false;
+        }
+
+        function step(comp, budget) {
+            var request = budget || {};
+            var stats = emptyStats();
+            var started = clockNow();
+            var operations = 0;
+            var count;
+            var keys;
+            var index;
+            var scanLimit = limit(request.maxDiscoveryLayers, limit(settings.maxDiscoveryLayers, 16));
+            var targetLimit = limit(request.maxTargetLayers, limit(settings.maxTargetLayers, 2));
+            var timeLimit = limit(request.timeBudgetMs, limit(settings.timeBudgetMs, 12));
+
+            if (comp !== activeComp || request.projectId !== projectId) {
+                reset();
+                activeComp = comp;
+                projectId = request.projectId;
+            }
+            try { count = comp ? Number(comp.numLayers) : 0; } catch (error) { count = 0; }
+            count = isFinite(count) ? Math.max(0, Math.floor(count)) : 0;
+            if (count !== layerCount) {
+                layerCount = count;
+                discoveryIndex = 1;
+                generation += 1;
+                discovered = false;
+                discoveryInProgress = true;
+                cleanupIndex = 1;
+                cleanupRemaining = count;
+            }
+
+            function hasTime() { return operations === 0 || clockNow() - started < timeLimit; }
+            function scan() {
+                // Do not scan small comps more than once in a single tick.
+                var maximum = Math.min(scanLimit, layerCount);
+                if (!discoveryInProgress) {
+                    if (clockNow() < nextDiscoveryAt) { return; }
+                    discoveryInProgress = true;
+                }
+                while (stats.discoveryLayers < maximum && discoveryInProgress && hasTime()) {
+                    discoverOne(stats);
+                    operations += 1;
+                }
+            }
+            function work() {
+                while (layerCount > 0 && stats.targetLayers < targetLimit && hasTime()) {
+                    stats.targetLayers += 1;
+                    try {
+                        if (groups.length === 0 || workSerial % 4 === 0) {
+                            cleanupOne(stats);
+                        } else {
+                            targetOne(stats, clockNow());
+                        }
+                    } catch (error) { stats.errors += 1; }
+                    workSerial += 1;
+                    operations += 1;
+                }
+            }
+            if (preferWork) { work(); scan(); } else { scan(); work(); }
+            preferWork = !preferWork;
+            stats.terminalVisits = stats.terminalCount;
+            stats.pending = pending();
+            stats.elapsedMs = Math.max(0, clockNow() - started);
+            keys = ["discoveryLayers", "targetLayers", "terminalVisits", "terminalCount",
+                "createdCount", "removedCount", "skippedTargets", "errors"];
+            for (index = 0; index < keys.length; index += 1) {
+                totals[keys[index]] += stats[keys[index]];
+            }
+            totals.ticks += 1;
+            lastTick = stats;
+            return stats;
+        }
+
+        function getStats() {
+            return {lastTick: lastTick, totals: totals, pending: pending()};
+        }
+        reset();
+        return {step: step, reset: reset, getStats: getStats};
+    }
+
     return {
         makeReservedEffectName: makeReservedEffectName,
         parseReservedEffectName: parseReservedEffectName,
         buildEffectExpressionPath: buildEffectExpressionPath,
         getSourceEffects: getSourceEffects,
         syncGroupEffects: syncGroupEffects,
+        createIncrementalSession: createIncrementalSession,
         removeOwnedEffects: removeOwnedEffects
     };
 }());

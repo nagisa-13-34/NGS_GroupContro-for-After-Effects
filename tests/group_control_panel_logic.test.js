@@ -91,6 +91,7 @@ class FakeMarkerProperty {
 class FakeEffects {
   constructor() {
     this.items = [];
+    this.addPropertyCalls = 0;
   }
 
   get numProperties() {
@@ -106,6 +107,7 @@ class FakeEffects {
   }
 
   addProperty(matchName) {
+    this.addPropertyCalls += 1;
     const effect = new FakeEffect(matchName);
     effect.effects = this;
     this.items.push(effect);
@@ -200,6 +202,7 @@ class FakeComp extends FakeCompItem {
     this.layersList = layers;
     this.frameDuration = 1 / 24;
     this.onLayerAccess = null;
+    this.layerAccesses = 0;
     for (const layer of layers) {
       layer.comp = this;
     }
@@ -214,6 +217,7 @@ class FakeComp extends FakeCompItem {
   }
 
   layer(index) {
+    this.layerAccesses += 1;
     if (this.onLayerAccess) {
       this.onLayerAccess(index);
     }
@@ -297,9 +301,7 @@ class FakeScheduler {
     }
 
     task.completed = true;
-    if (task.expression === 'GroupControlEffectWatcherTick()') {
-      sandbox.GroupControlEffectWatcherTick();
-    }
+    vm.runInNewContext(task.expression, sandbox);
     return true;
   }
 
@@ -308,14 +310,14 @@ class FakeScheduler {
   }
 }
 
-function loadPanel({ scheduler = null } = {}) {
+function loadPanel({ scheduler = null, sharedGlobal = null, appOverride = null } = {}) {
   const panel = fs.readFileSync(path.join(rootDir, 'panel', 'GroupControl.jsx'), 'utf8')
     .replace(/#include\s+["']([^"']+)["']/g, (includeLine, includeName) => {
       const includePath = path.join(rootDir, 'panel', includeName);
       return fs.existsSync(includePath) ? fs.readFileSync(includePath, 'utf8') : '';
     })
     .replace(/var GroupControlPanel = buildUI\(this\);\s*$/, '');
-  const app = {
+  const app = appOverride || {
     project: { activeItem: null },
     scheduleTask: scheduler ? scheduler.scheduleTask.bind(scheduler) : () => 1,
     cancelTask: scheduler ? scheduler.cancelTask.bind(scheduler) : () => {},
@@ -328,6 +330,9 @@ function loadPanel({ scheduler = null } = {}) {
     Window: FakeWindow,
     app,
   };
+  if (sharedGlobal) {
+    sandbox.$ = { global: sharedGlobal };
+  }
   vm.runInNewContext(panel, sandbox, { filename: 'GroupControl.jsx' });
   return sandbox;
 }
@@ -349,10 +354,36 @@ function effectNamed(layer, name) {
   return layer.effects.items.find((effect) => effect.name === name) || null;
 }
 
+function effectAddPropertyCount(comp) {
+  return comp.layersList.reduce((count, layer) => count + layer.effects.addPropertyCalls, 0);
+}
+
 function addSourceEffect(group, name) {
   const effect = group.effects.addProperty('ADBE Gaussian Blur 2');
   effect.name = name;
   return effect;
+}
+
+function makeLargeWatcherFixture(groupCount = 20) {
+  const layers = [];
+  const groups = [];
+  const roots = [];
+
+  for (let index = 0; index < groupCount; index += 1) {
+    const group = new FakeLayer(1000 + index, `[G] Group ${index}`, { nullLayer: true });
+    const root = new FakeLayer(2000 + index, `Root ${index}`);
+    group.effects.property(1).property(1).setValue(1);
+    addSourceEffect(group, 'Gaussian Blur');
+    groups.push(group);
+    roots.push(root);
+    layers.push(group, root);
+  }
+
+  return {
+    comp: new FakeComp(layers),
+    groups,
+    roots,
+  };
 }
 
 test('Apply attaches only roots, preserves internal parents, and counts external candidates', () => {
@@ -553,7 +584,7 @@ test('buildUI starts one-shot watcher sync, reschedules after a Tick, and stops 
   const ui = panel.buildUI({});
 
   assert.equal(scheduler.scheduleCalls.length, 1);
-  assert.equal(scheduler.scheduleCalls[0].expression, 'GroupControlEffectWatcherTick()');
+  assert.match(scheduler.scheduleCalls[0].expression, /^GroupControlEffectWatcherTick\(\d+\)$/);
   assert.equal(scheduler.scheduleCalls[0].delay, 200);
   assert.equal(scheduler.scheduleCalls[0].repeat, false);
   assert.notEqual(effectNamed(root, '[GFX:100:2] Gaussian Blur'), null);
@@ -587,6 +618,9 @@ test('active-comp watcher synchronizes every Group Null in the active compositio
   panel.app.project.activeItem = comp;
   panel.buildUI({});
 
+  for (let index = 0; index < 8; index += 1) {
+    assert.equal(scheduler.runNext(panel), true);
+  }
   assert.notEqual(effectNamed(firstRoot, '[GFX:100:2] Gaussian Blur'), null);
   assert.notEqual(effectNamed(secondRoot, '[GFX:200:2] Tint'), null);
 });
@@ -631,7 +665,149 @@ test('watcher removes reserved copies whose Group Null was manually deleted', ()
   assert.notEqual(effectNamed(root, '[GFX:100:2] Gaussian Blur'), null);
 
   comp.removeLayer(group);
-  assert.equal(scheduler.runNext(panel), true);
+  for (let index = 0; index < 8; index += 1) {
+    assert.equal(scheduler.runNext(panel), true);
+  }
   assert.equal(effectNamed(root, '[GFX:100:2] Gaussian Blur'), null);
   panel.GroupControlEffectWatcherStop();
+});
+
+test('watcher bounds one large-comp tick by host access and copy creation before catching up', () => {
+  const scheduler = new FakeScheduler();
+  const fixture = makeLargeWatcherFixture();
+  const { comp, groups, roots } = fixture;
+  const initialCopyCount = effectAddPropertyCount(comp);
+
+  const panel = loadPanel({ scheduler });
+  panel.app.project.activeItem = comp;
+  panel.GroupControlEffectWatcherStart();
+
+  const observedTicks = [];
+  observedTicks.push(panel.GroupControlEffectWatcherGetStats().lastTick);
+  assert.ok(observedTicks[0].discoveryLayers <= 16);
+  assert.ok(observedTicks[0].targetLayers <= 2);
+  assert.ok(comp.layerAccesses < comp.numLayers);
+  assert.ok(effectAddPropertyCount(comp) - initialCopyCount <= 2);
+
+  for (let index = 0; index < 40; index += 1) {
+    assert.equal(scheduler.runNext(panel), true);
+    observedTicks.push(panel.GroupControlEffectWatcherGetStats().lastTick);
+  }
+
+  assert.ok(observedTicks.every((stats) => stats.discoveryLayers <= 16));
+  assert.ok(observedTicks.every((stats) => stats.targetLayers <= 2));
+  assert.ok(comp.layerAccesses > 16);
+  assert.ok(effectAddPropertyCount(comp) - initialCopyCount >= groups.length);
+  roots.forEach((root, index) => {
+    assert.notEqual(effectNamed(root, `[GFX:${groups[index].id}:2] Gaussian Blur`), null);
+  });
+  panel.GroupControlEffectWatcherStop();
+});
+
+test('RunOnce performs one bounded tick without reserving a schedule task', () => {
+  const scheduler = new FakeScheduler();
+  const { comp } = makeLargeWatcherFixture();
+  const panel = loadPanel({ scheduler });
+  panel.app.project.activeItem = comp;
+  const initialCopyCount = effectAddPropertyCount(comp);
+
+  panel.GroupControlEffectWatcherRunOnce();
+
+  assert.equal(scheduler.scheduleCalls.length, 0);
+  assert.ok(comp.layerAccesses > 0);
+  assert.ok(effectAddPropertyCount(comp) > initialCopyCount);
+  const stats = panel.GroupControlEffectWatcherGetStats().lastTick;
+  assert.ok(stats.discoveryLayers <= 16);
+  assert.ok(stats.targetLayers <= 2);
+});
+
+test('watcher resets the incremental session for no comp, project switches, and stop', () => {
+  const scheduler = new FakeScheduler();
+  const app = {
+    project: null,
+    scheduleTask: scheduler.scheduleTask.bind(scheduler),
+    cancelTask: scheduler.cancelTask.bind(scheduler),
+  };
+  const panel = loadPanel({ scheduler, appOverride: app });
+  const compA = makeLargeWatcherFixture(2).comp;
+  const compB = makeLargeWatcherFixture(2).comp;
+  const projectA = { activeItem: compA };
+  const projectB = { activeItem: compB };
+  const originalFactory = panel.GroupControlEffectSync.createIncrementalSession;
+  const projectIds = [];
+  let resetCalls = 0;
+
+  panel.GroupControlEffectSync.createIncrementalSession = (options) => {
+    const session = originalFactory(options);
+    const originalStep = session.step;
+    const originalReset = session.reset;
+    session.step = (comp, budget) => {
+      projectIds.push(budget.projectId);
+      return originalStep.call(session, comp, budget);
+    };
+    session.reset = () => {
+      resetCalls += 1;
+      return originalReset.call(session);
+    };
+    return session;
+  };
+
+  app.project = projectA;
+  panel.GroupControlEffectWatcherStart();
+  const resetAfterStart = resetCalls;
+  assert.equal(projectIds[0], projectA);
+
+  projectA.activeItem = null;
+  assert.equal(scheduler.runNext(panel), true);
+  assert.ok(resetCalls > resetAfterStart);
+  const resetAfterNoComp = resetCalls;
+
+  app.project = projectB;
+  assert.equal(scheduler.runNext(panel), true);
+  assert.ok(resetCalls > resetAfterNoComp);
+  assert.equal(projectIds[projectIds.length - 1], projectB);
+
+  panel.GroupControlEffectWatcherStop();
+  assert.ok(resetCalls > resetAfterNoComp);
+  assert.equal(scheduler.pendingCount(), 0);
+});
+
+test('reloading cancels the old reservation, ignores stale ticks, and protects the new watcher from old close', () => {
+  const scheduler = new FakeScheduler();
+  const sharedGlobal = {};
+  const app = {
+    project: null,
+    scheduleTask: scheduler.scheduleTask.bind(scheduler),
+    cancelTask: scheduler.cancelTask.bind(scheduler),
+  };
+  const { comp } = makeLargeWatcherFixture(2);
+  app.project = { activeItem: comp };
+
+  const oldPanel = loadPanel({ scheduler, sharedGlobal, appOverride: app });
+  const oldUI = oldPanel.buildUI({});
+  const oldTaskId = scheduler.scheduleCalls[0].id;
+  const oldReservation = scheduler.scheduleCalls[0].expression;
+
+  const newPanel = loadPanel({ scheduler, sharedGlobal, appOverride: app });
+  const newUI = newPanel.buildUI({});
+  const newTaskId = scheduler.scheduleCalls[scheduler.scheduleCalls.length - 1].id;
+
+  assert.ok(scheduler.cancelCalls.includes(oldTaskId));
+  assert.notEqual(newTaskId, oldTaskId);
+  assert.equal(scheduler.pendingCount(), 1);
+
+  const pendingBeforeStaleReservation = scheduler.pendingCount();
+  vm.runInNewContext(oldReservation, newPanel);
+  assert.equal(scheduler.pendingCount(), pendingBeforeStaleReservation);
+
+  oldPanel.GroupControlEffectWatcherTick();
+  assert.equal(scheduler.pendingCount(), 1);
+
+  oldUI.onClose();
+  assert.equal(scheduler.pendingCount(), 1);
+  assert.equal(scheduler.cancelCalls.includes(newTaskId), false);
+
+  newUI.onClose();
+  assert.equal(scheduler.pendingCount(), 0);
+  assert.ok(scheduler.cancelCalls.includes(newTaskId));
 });
