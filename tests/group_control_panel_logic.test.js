@@ -669,6 +669,21 @@ test('buildUI starts one-shot watcher sync, reschedules after a Tick, and stops 
   assert.equal(scheduler.pendingCount(), 0);
 });
 
+test('Layer Count display reserves enough width for multi-digit values', () => {
+  const roots = Array.from({ length: 12 }, (_, index) => (
+    new FakeLayer(101 + index, `Root ${index + 1}`)
+  ));
+  const { comp } = makeGroupFixture({ count: 12, extraLayers: roots });
+  const panel = loadPanel();
+  panel.app.project.activeItem = comp;
+
+  const ui = panel.buildUI({});
+
+  assert.equal(panel.groupControlUI.countText.text, '12');
+  assert.ok(panel.groupControlUI.countText.characters >= 4);
+  ui.onClose();
+});
+
 test('watcher passes the agreed Effect work budgets into the incremental session', () => {
   const panel = loadPanel();
   let receivedOptions = null;

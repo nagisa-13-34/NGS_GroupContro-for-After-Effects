@@ -2057,6 +2057,8 @@ function buildUI(thisObj) {
     layersRow.orientation = "row";
     minusButton = layersRow.add("button", undefined, "-");
     countText = layersRow.add("statictext", undefined, "0");
+    countText.characters = 4;
+    countText.justify = "center";
     plusButton = layersRow.add("button", undefined, "+");
     statusLabel = panel.add("statictext", undefined, "Status Text");
     statusText = panel.add("statictext", undefined, "");
