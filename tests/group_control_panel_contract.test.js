@@ -59,7 +59,8 @@ test('Group Control panel exposes the ScriptUI and adapter contract', () => {
   assert.match(source, /maxEffectAdds\s*:\s*1/);
   assert.match(source, /session\.step\s*\(\s*comp\s*,\s*\{\s*projectId\s*:\s*project\s*\}\s*\)/);
   assert.match(source, /GROUP_CONTROL_EFFECT_SYNC_INTERVAL_MS\s*=\s*200/);
-  assert.match(source, /app\.scheduleTask\s*\(\s*["']GroupControlEffectWatcherTick\(\s*["']\s*\+\s*groupControlEffectWatcherState\.generation\s*\+\s*["']\s*\)["']\s*,\s*GROUP_CONTROL_EFFECT_SYNC_INTERVAL_MS\s*,\s*false\s*\)/);
+  assert.match(source, /GROUP_CONTROL_EFFECT_SYNC_PENDING_INTERVAL_MS\s*=\s*10/);
+  assert.match(source, /app\.scheduleTask\s*\(\s*["']GroupControlEffectWatcherTick\(\s*["']\s*\+\s*groupControlEffectWatcherState\.generation\s*\+\s*["']\s*\)["']\s*,\s*delay\s*,\s*false\s*\)/);
   assert.match(source, /app\.cancelTask\s*\(/);
   assert.match(source, /function\s+buildUI[\s\S]*GroupControlEffectWatcherStart\s*\(\)/);
   assert.match(source, /panel\.onClose\s*=\s*function[\s\S]*GroupControlEffectWatcherStop\s*\(/);

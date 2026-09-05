@@ -652,7 +652,7 @@ test('buildUI starts one-shot watcher sync, reschedules after a Tick, and stops 
 
   assert.equal(scheduler.scheduleCalls.length, 1);
   assert.match(scheduler.scheduleCalls[0].expression, /^GroupControlEffectWatcherTick\(\d+\)$/);
-  assert.equal(scheduler.scheduleCalls[0].delay, 200);
+  assert.equal(scheduler.scheduleCalls[0].delay, 10);
   assert.equal(scheduler.scheduleCalls[0].repeat, false);
   assert.notEqual(effectNamed(root, '[GFX:100:2] Gaussian Blur'), null);
   assert.equal(effectNamed(externalChild, '[GFX:100:2] Gaussian Blur'), null);
@@ -778,6 +778,9 @@ test('watcher bounds one large-comp tick by host access and copy creation before
   panel.app.project.activeItem = comp;
   panel.GroupControlEffectWatcherStart();
 
+  assert.equal(panel.GroupControlEffectWatcherGetStats().pending, true);
+  assert.equal(scheduler.scheduleCalls[0].delay, 10);
+
   const observedTicks = [];
   observedTicks.push(panel.GroupControlEffectWatcherGetStats().lastTick);
   assert.ok(observedTicks[0].discoveryLayers <= 16);
@@ -785,7 +788,9 @@ test('watcher bounds one large-comp tick by host access and copy creation before
   assert.ok(comp.layerAccesses < comp.numLayers);
   assert.ok(effectAddPropertyCount(comp) - initialCopyCount <= 2);
 
-  for (let index = 0; index < 40; index += 1) {
+  for (let index = 0;
+    index < 200 && panel.GroupControlEffectWatcherGetStats().pending;
+    index += 1) {
     assert.equal(scheduler.runNext(panel), true);
     observedTicks.push(panel.GroupControlEffectWatcherGetStats().lastTick);
   }
@@ -797,6 +802,9 @@ test('watcher bounds one large-comp tick by host access and copy creation before
   roots.forEach((root, index) => {
     assert.notEqual(effectNamed(root, `[GFX:${groups[index].id}:2] Gaussian Blur`), null);
   });
+
+  assert.equal(panel.GroupControlEffectWatcherGetStats().pending, false);
+  assert.equal(scheduler.scheduleCalls[scheduler.scheduleCalls.length - 1].delay, 200);
   panel.GroupControlEffectWatcherStop();
 });
 

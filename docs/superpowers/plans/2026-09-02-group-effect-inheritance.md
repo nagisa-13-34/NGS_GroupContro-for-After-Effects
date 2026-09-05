@@ -64,7 +64,7 @@ node --test tests/group_control_effect_sync.test.js tests/group_control_panel_lo
 
 **Work:**
 
-- Panel起動時に1回実行型`app.scheduleTask`を予約し、約200msごとにActive Compを自動同期する。監視が重複予約されないようロックし、可能ならPanel終了時にキャンセルする。
+- Panel起動時に1回実行型`app.scheduleTask`を予約し、同期中は10ms、同期完了後は200msでActive Compを自動監視する。監視が重複予約されないようロックし、可能ならPanel終了時にキャンセルする。
 - 値は監視周期でsetValueせず、複製側ExpressionでAEの毎フレーム評価に任せる。
 - UngroupでGroup NullのLayer.idに紐づく予約Effectだけを削除し、通常のChild Effectを残す。
 - 既存のParent、Marker、Layer Count、Status Text、Undo境界を変更しない。

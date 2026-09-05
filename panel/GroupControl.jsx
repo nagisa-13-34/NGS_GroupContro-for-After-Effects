@@ -37,6 +37,7 @@ var STATUS_UNGROUP_COMPLETE = "Ungroup完了。";
 
 var groupControlUI = null;
 var GROUP_CONTROL_EFFECT_SYNC_INTERVAL_MS = 200;
+var GROUP_CONTROL_EFFECT_SYNC_PENDING_INTERVAL_MS = 10;
 var GROUP_CONTROL_EFFECT_WATCHER_STATE_KEY = "__NGS_GroupControlEffectWatcherState";
 var groupControlEffectWatcherRuntimeToken = {};
 var groupControlEffectWatcherStateGlobal = this;
@@ -603,6 +604,8 @@ function cancelGroupEffectWatcherTask() {
 function scheduleGroupEffectWatcher() {
     var hostApp;
     var taskId;
+    var delay = GROUP_CONTROL_EFFECT_SYNC_INTERVAL_MS;
+    var stats;
 
     if (!groupControlEffectWatcherState.active ||
             groupControlEffectWatcherState.runtimeToken !== groupControlEffectWatcherRuntimeToken ||
@@ -617,16 +620,20 @@ function scheduleGroupEffectWatcher() {
     }
 
     groupControlEffectWatcherState.app = hostApp;
+    stats = getGroupEffectWatcherStats();
+    if (stats !== null && typeof stats !== "undefined" && stats.pending === true) {
+        delay = GROUP_CONTROL_EFFECT_SYNC_PENDING_INTERVAL_MS;
+    }
     try {
         if (typeof app !== "undefined" && app !== null &&
                 typeof app.scheduleTask === "function" && hostApp === app) {
             taskId = app.scheduleTask("GroupControlEffectWatcherTick(" +
                 groupControlEffectWatcherState.generation + ")",
-                GROUP_CONTROL_EFFECT_SYNC_INTERVAL_MS, false);
+                delay, false);
         } else {
             taskId = hostApp.scheduleTask("GroupControlEffectWatcherTick(" +
                 groupControlEffectWatcherState.generation + ")",
-                GROUP_CONTROL_EFFECT_SYNC_INTERVAL_MS, false);
+                delay, false);
         }
         if (taskId !== null && typeof taskId !== "undefined") {
             groupControlEffectWatcherState.taskId = taskId;
