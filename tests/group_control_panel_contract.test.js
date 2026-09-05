@@ -53,10 +53,10 @@ test('Group Control panel exposes the ScriptUI and adapter contract', () => {
   assert.match(source, /GroupControlEffectSync\.createIncrementalSession\s*\(/);
   assert.match(source, /getTargetRange\s*:\s*getGroupEffectWatcherTargetRange/);
   assert.match(source, /maxDiscoveryLayers\s*:\s*16/);
-  assert.match(source, /maxTargetLayers\s*:\s*2/);
+  assert.match(source, /maxTargetLayers\s*:\s*16/);
   assert.match(source, /timeBudgetMs\s*:\s*12/);
-  assert.match(source, /maxPropertyOperations\s*:\s*8/);
-  assert.match(source, /maxEffectAdds\s*:\s*1/);
+  assert.match(source, /maxPropertyOperations\s*:\s*64/);
+  assert.match(source, /maxEffectAdds\s*:\s*16/);
   assert.match(source, /session\.step\s*\(\s*comp\s*,\s*\{\s*projectId\s*:\s*project\s*\}\s*\)/);
   assert.match(source, /GROUP_CONTROL_EFFECT_SYNC_INTERVAL_MS\s*=\s*200/);
   assert.match(source, /GROUP_CONTROL_EFFECT_SYNC_PENDING_INTERVAL_MS\s*=\s*10/);

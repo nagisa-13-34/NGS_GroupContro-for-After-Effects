@@ -697,10 +697,10 @@ test('watcher passes the agreed Effect work budgets into the incremental session
 
   assert.deepEqual(session, {});
   assert.equal(receivedOptions.maxDiscoveryLayers, 16);
-  assert.equal(receivedOptions.maxTargetLayers, 2);
+  assert.equal(receivedOptions.maxTargetLayers, 16);
   assert.equal(receivedOptions.timeBudgetMs, 12);
-  assert.equal(receivedOptions.maxPropertyOperations, 8);
-  assert.equal(receivedOptions.maxEffectAdds, 1);
+  assert.equal(receivedOptions.maxPropertyOperations, 64);
+  assert.equal(receivedOptions.maxEffectAdds, 16);
 });
 
 test('watcher empty stats include the Effect work counters', () => {
@@ -799,9 +799,9 @@ test('watcher bounds one large-comp tick by host access and copy creation before
   const observedTicks = [];
   observedTicks.push(panel.GroupControlEffectWatcherGetStats().lastTick);
   assert.ok(observedTicks[0].discoveryLayers <= 16);
-  assert.ok(observedTicks[0].targetLayers <= 2);
-  assert.ok(comp.layerAccesses < comp.numLayers);
-  assert.ok(effectAddPropertyCount(comp) - initialCopyCount <= 2);
+  assert.ok(observedTicks[0].targetLayers <= 16);
+  assert.ok(comp.layerAccesses <= 64);
+  assert.ok(effectAddPropertyCount(comp) - initialCopyCount <= 16);
 
   for (let index = 0;
     index < 200 && panel.GroupControlEffectWatcherGetStats().pending;
@@ -811,7 +811,7 @@ test('watcher bounds one large-comp tick by host access and copy creation before
   }
 
   assert.ok(observedTicks.every((stats) => stats.discoveryLayers <= 16));
-  assert.ok(observedTicks.every((stats) => stats.targetLayers <= 2));
+  assert.ok(observedTicks.every((stats) => stats.targetLayers <= 16));
   assert.ok(comp.layerAccesses > 16);
   assert.ok(effectAddPropertyCount(comp) - initialCopyCount >= groups.length);
   roots.forEach((root, index) => {
@@ -820,6 +820,29 @@ test('watcher bounds one large-comp tick by host access and copy creation before
 
   assert.equal(panel.GroupControlEffectWatcherGetStats().pending, false);
   assert.equal(scheduler.scheduleCalls[scheduler.scheduleCalls.length - 1].delay, 200);
+  panel.GroupControlEffectWatcherStop();
+});
+
+test('watcher applies one simple Effect to twenty target layers in a few ticks', () => {
+  const scheduler = new FakeScheduler();
+  const roots = Array.from({ length: 20 }, (_, index) => (
+    new FakeLayer(101 + index, `Character ${index + 1}`)
+  ));
+  const { comp, group } = makeGroupFixture({ count: 20, extraLayers: roots });
+  addSourceEffect(group, 'Gaussian Blur');
+  const panel = loadPanel({ scheduler });
+  panel.app.project.activeItem = comp;
+
+  panel.GroupControlEffectWatcherStart();
+  let ticks = 1;
+  while (panel.GroupControlEffectWatcherGetStats().pending && ticks < 100) {
+    assert.equal(scheduler.runNext(panel), true);
+    ticks += 1;
+  }
+
+  assert.equal(panel.GroupControlEffectWatcherGetStats().pending, false);
+  assert.ok(roots.every((root) => effectNamed(root, '[GFX:100:2] Gaussian Blur')));
+  assert.ok(ticks <= 8, `expected at most 8 ticks, received ${ticks}`);
   panel.GroupControlEffectWatcherStop();
 });
 
@@ -854,8 +877,8 @@ test('watcher caps real Expression setters and Effect additions per tick for a l
 
   assert.equal(panel.GroupControlEffectWatcherGetStats().pending, false);
   assert.ok(observedTicks.some((tick) => tick.expressionWrites > 0));
-  assert.ok(observedTicks.every((tick) => tick.expressionWrites <= 8));
-  assert.ok(observedTicks.every((tick) => tick.effectAdds <= 1));
+  assert.ok(observedTicks.every((tick) => tick.expressionWrites <= 64));
+  assert.ok(observedTicks.every((tick) => tick.effectAdds <= 16));
   assert.equal(
     root.effects.items.filter((effect) => effect.name.indexOf('[GFX:100:') === 0).length,
     2,
@@ -882,7 +905,7 @@ test('RunOnce performs one bounded tick without reserving a schedule task', () =
   assert.ok(effectAddPropertyCount(comp) > initialCopyCount);
   const stats = panel.GroupControlEffectWatcherGetStats().lastTick;
   assert.ok(stats.discoveryLayers <= 16);
-  assert.ok(stats.targetLayers <= 2);
+  assert.ok(stats.targetLayers <= 16);
 });
 
 test('watcher resets the incremental session for no comp, project switches, and stop', () => {

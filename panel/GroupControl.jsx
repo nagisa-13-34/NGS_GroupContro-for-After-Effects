@@ -661,10 +661,10 @@ function createGroupEffectWatcherSession() {
             isGroupLayer: isGroupLayer,
             getTargetRange: getGroupEffectWatcherTargetRange,
             maxDiscoveryLayers: 16,
-            maxTargetLayers: 2,
+            maxTargetLayers: 16,
             timeBudgetMs: 12,
-            maxPropertyOperations: 8,
-            maxEffectAdds: 1,
+            maxPropertyOperations: 64,
+            maxEffectAdds: 16,
             now: function () {
                 return new Date().getTime();
             }
