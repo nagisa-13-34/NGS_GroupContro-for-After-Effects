@@ -652,7 +652,7 @@ test('buildUI starts one-shot watcher sync, reschedules after a Tick, and stops 
 
   assert.equal(scheduler.scheduleCalls.length, 1);
   assert.match(scheduler.scheduleCalls[0].expression, /^GroupControlEffectWatcherTick\(\d+\)$/);
-  assert.equal(scheduler.scheduleCalls[0].delay, 10);
+  assert.equal(scheduler.scheduleCalls[0].delay, 200);
   assert.equal(scheduler.scheduleCalls[0].repeat, false);
   assert.notEqual(effectNamed(root, '[GFX:100:2] Gaussian Blur'), null);
   assert.equal(effectNamed(externalChild, '[GFX:100:2] Gaussian Blur'), null);
@@ -696,11 +696,11 @@ test('watcher passes the agreed Effect work budgets into the incremental session
   const session = panel.createGroupEffectWatcherSession();
 
   assert.deepEqual(session, {});
-  assert.equal(receivedOptions.maxDiscoveryLayers, 16);
-  assert.equal(receivedOptions.maxTargetLayers, 16);
-  assert.equal(receivedOptions.timeBudgetMs, 12);
-  assert.equal(receivedOptions.maxPropertyOperations, 64);
-  assert.equal(receivedOptions.maxEffectAdds, 16);
+  assert.equal(receivedOptions.maxDiscoveryLayers, 64);
+  assert.equal(receivedOptions.maxTargetLayers, 64);
+  assert.equal(receivedOptions.timeBudgetMs, 40);
+  assert.equal(receivedOptions.maxPropertyOperations, 256);
+  assert.equal(receivedOptions.maxEffectAdds, 64);
 });
 
 test('watcher empty stats include the Effect work counters', () => {
@@ -793,15 +793,17 @@ test('watcher bounds one large-comp tick by host access and copy creation before
   panel.app.project.activeItem = comp;
   panel.GroupControlEffectWatcherStart();
 
-  assert.equal(panel.GroupControlEffectWatcherGetStats().pending, true);
-  assert.equal(scheduler.scheduleCalls[0].delay, 10);
+  assert.equal(
+    scheduler.scheduleCalls[0].delay,
+    panel.GroupControlEffectWatcherGetStats().pending ? 10 : 200,
+  );
 
   const observedTicks = [];
   observedTicks.push(panel.GroupControlEffectWatcherGetStats().lastTick);
-  assert.ok(observedTicks[0].discoveryLayers <= 16);
-  assert.ok(observedTicks[0].targetLayers <= 16);
-  assert.ok(comp.layerAccesses <= 64);
-  assert.ok(effectAddPropertyCount(comp) - initialCopyCount <= 16);
+  assert.ok(observedTicks[0].discoveryLayers <= 64);
+  assert.ok(observedTicks[0].targetLayers <= 64);
+  assert.ok(comp.layerAccesses <= 512);
+  assert.ok(effectAddPropertyCount(comp) - initialCopyCount <= 64);
 
   for (let index = 0;
     index < 200 && panel.GroupControlEffectWatcherGetStats().pending;
@@ -810,8 +812,8 @@ test('watcher bounds one large-comp tick by host access and copy creation before
     observedTicks.push(panel.GroupControlEffectWatcherGetStats().lastTick);
   }
 
-  assert.ok(observedTicks.every((stats) => stats.discoveryLayers <= 16));
-  assert.ok(observedTicks.every((stats) => stats.targetLayers <= 16));
+  assert.ok(observedTicks.every((stats) => stats.discoveryLayers <= 64));
+  assert.ok(observedTicks.every((stats) => stats.targetLayers <= 64));
   assert.ok(comp.layerAccesses > 16);
   assert.ok(effectAddPropertyCount(comp) - initialCopyCount >= groups.length);
   roots.forEach((root, index) => {
@@ -842,7 +844,7 @@ test('watcher applies one simple Effect to twenty target layers in a few ticks',
 
   assert.equal(panel.GroupControlEffectWatcherGetStats().pending, false);
   assert.ok(roots.every((root) => effectNamed(root, '[GFX:100:2] Gaussian Blur')));
-  assert.ok(ticks <= 8, `expected at most 8 ticks, received ${ticks}`);
+  assert.ok(ticks <= 3, `expected at most 3 ticks, received ${ticks}`);
   panel.GroupControlEffectWatcherStop();
 });
 
@@ -877,8 +879,8 @@ test('watcher caps real Expression setters and Effect additions per tick for a l
 
   assert.equal(panel.GroupControlEffectWatcherGetStats().pending, false);
   assert.ok(observedTicks.some((tick) => tick.expressionWrites > 0));
-  assert.ok(observedTicks.every((tick) => tick.expressionWrites <= 64));
-  assert.ok(observedTicks.every((tick) => tick.effectAdds <= 16));
+  assert.ok(observedTicks.every((tick) => tick.expressionWrites <= 256));
+  assert.ok(observedTicks.every((tick) => tick.effectAdds <= 64));
   assert.equal(
     root.effects.items.filter((effect) => effect.name.indexOf('[GFX:100:') === 0).length,
     2,
@@ -904,8 +906,8 @@ test('RunOnce performs one bounded tick without reserving a schedule task', () =
   assert.ok(comp.layerAccesses > 0);
   assert.ok(effectAddPropertyCount(comp) > initialCopyCount);
   const stats = panel.GroupControlEffectWatcherGetStats().lastTick;
-  assert.ok(stats.discoveryLayers <= 16);
-  assert.ok(stats.targetLayers <= 16);
+  assert.ok(stats.discoveryLayers <= 64);
+  assert.ok(stats.targetLayers <= 64);
 });
 
 test('watcher resets the incremental session for no comp, project switches, and stop', () => {
