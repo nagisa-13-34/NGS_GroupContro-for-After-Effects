@@ -660,11 +660,11 @@ function createGroupEffectWatcherSession() {
         return GroupControlEffectSync.createIncrementalSession({
             isGroupLayer: isGroupLayer,
             getTargetRange: getGroupEffectWatcherTargetRange,
-            maxDiscoveryLayers: 64,
-            maxTargetLayers: 64,
-            timeBudgetMs: 40,
-            maxPropertyOperations: 256,
-            maxEffectAdds: 64,
+            maxDiscoveryLayers: 16,
+            maxTargetLayers: 16,
+            timeBudgetMs: 12,
+            maxPropertyOperations: 64,
+            maxEffectAdds: 16,
             now: function () {
                 return new Date().getTime();
             }

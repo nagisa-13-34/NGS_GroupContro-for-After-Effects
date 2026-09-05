@@ -872,7 +872,7 @@ Effectの複製対象は、Group Nullのindex直下からLayer Countで得た現
 
 複製Effectの末端パラメータだけに、Group Nullの元Effectを参照するExpressionを設定する。Group Null側のキーやExpressionを含む値は、AEのExpression評価により毎フレーム複製側へ反映する。Layer Transformへは設定しない。
 
-Panel起動中は`app.scheduleTask`で次回の監視を予約し、Effectの追加 / 削除、Group対象変更、複製の手動削除を差分反映する。同期処理が残っている間は10ms、同期完了後の通常監視は200msを予約する。監視1回の全グループ合計に処理量と40msの時間上限を設け、Layerの発見、Effectの反映、不要コピーの掃除を複数回に分けて進める。軽いEffectは1回で複数Layerへ反映し、重いEffectは時間上限に達した後で次回へ続ける。数値の追従はExpressionに任せる。Panel起動時も分割処理で現在状態へ同期する。
+Panel起動中は`app.scheduleTask`で次回の監視を予約し、Effectの追加 / 削除、Group対象変更、複製の手動削除を差分反映する。同期処理が残っている間は10ms、同期完了後の通常監視は200msを予約する。監視1回の全グループ合計に処理量と12msの時間上限を設け、Layerの発見、Effectの反映、不要コピーの掃除を複数回に分けて進める。軽いEffectは1回で複数Layerへ反映し、重いEffectは時間上限に達した後で次回へ続ける。数値の追従はExpressionに任せる。Panel起動時も分割処理で現在状態へ同期する。
 
 PropertyツリーはEffect Parade内だけを走査し、Expressionを設定できる末端Propertyに限って、`thisComp.layer("<Group Null名>").effect("<元Effect名>")(<Property番号>)...`形式のExpressionを設定する。各階層の番号は元Effect内で1から数え、表示名の変化や重複に依存しない。Expression非対応の末端Propertyは、読み書きできる型に限って現在値を一度だけコピーし、同期不能として扱う。NO_VALUEやCUSTOM_VALUEの値は取得しない。自動監視ではEffect内のProperty処理も分割し、途中の状態を検証してから続行する。`ADBE Transform Group`やその配下へExpressionを書き込んではいけない。
 
