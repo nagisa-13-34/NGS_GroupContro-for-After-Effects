@@ -2130,6 +2130,17 @@ function buildUI(thisObj) {
 
     panel.onActivate = function () {
         refreshPanel();
+        if (groupControlEffectWatcherState.active !== true) {
+            watcherOwner = GroupControlEffectWatcherStart();
+        }
+    };
+
+    /* AE cannot execute scheduleTask callbacks while a modal dialog owns the
+     * application. A docked panel is deactivated when that happens, so stop
+     * the recurring reservation until the panel becomes active again. */
+    panel.onDeactivate = function () {
+        GroupControlEffectWatcherStop(watcherOwner);
+        watcherOwner = null;
     };
 
     panel.onClose = function () {
