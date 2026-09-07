@@ -1666,6 +1666,7 @@ function deselectAllLayers(comp) {
 
 function createGroupCore(comp) {
     var anchor = getTopmostSelectedLayer(comp);
+    var selectedLayerCount = 0;
     var group = null;
     var effects;
     var effect;
@@ -1673,6 +1674,14 @@ function createGroupCore(comp) {
 
     if (comp === null || typeof comp === "undefined") {
         return makeFailure(STATUS_NO_COMP);
+    }
+
+    /* Capture the selection before addNull() changes the active selection.
+     * The selected layers become the initial Group Control range. */
+    try {
+        selectedLayerCount = (comp.selectedLayers || []).length;
+    } catch (selectionError) {
+        selectedLayerCount = 0;
     }
 
     try {
@@ -1701,7 +1710,7 @@ function createGroupCore(comp) {
             throw new Error("Layer Countパラメータを確認できませんでした。");
         }
 
-        layerCountProperty.setValue(0);
+        layerCountProperty.setValue(selectedLayerCount);
         deselectAllLayers(comp);
         group.selected = true;
 

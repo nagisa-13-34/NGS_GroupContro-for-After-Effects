@@ -684,6 +684,47 @@ test('Layer Count display reserves enough width for multi-digit values', () => {
   ui.onClose();
 });
 
+test('Create Group initializes Layer Count from the current selection', () => {
+  const selected = [
+    new FakeLayer(101, 'Selected 1'),
+    new FakeLayer(102, 'Selected 2'),
+    new FakeLayer(103, 'Selected 3'),
+  ];
+  const group = new FakeLayer(200, '[G] Group', { nullLayer: true });
+  const layers = [...selected];
+  const comp = {
+    layersList: layers,
+    layers: {
+      addNull() {
+        group.comp = comp;
+        layers.push(group);
+        return group;
+      },
+    },
+    get numLayers() {
+      return layers.length;
+    },
+    get selectedLayers() {
+      return layers.filter((layer) => layer.selected);
+    },
+    layer(index) {
+      return layers[index - 1] || null;
+    },
+  };
+  selected.forEach((layer) => {
+    layer.comp = comp;
+    layer.selected = true;
+  });
+  group.moveBefore = () => {};
+  group.remove = () => {};
+
+  const panel = loadPanel();
+  const result = panel.createGroupCore(comp);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.group.effects.property(1).property(1).value, 3);
+});
+
 test('watcher passes the agreed Effect work budgets into the incremental session', () => {
   const panel = loadPanel();
   let receivedOptions = null;
