@@ -669,6 +669,25 @@ test('buildUI starts one-shot watcher sync, reschedules after a Tick, and stops 
   assert.equal(scheduler.pendingCount(), 0);
 });
 
+test('panel activation re-arms the watcher after a lost schedule task', () => {
+  const scheduler = new FakeScheduler();
+  const root = new FakeLayer(101, 'Root');
+  const { comp, group } = makeGroupFixture({ count: 1, extraLayers: [root] });
+  addSourceEffect(group, 'Gaussian Blur');
+  const panel = loadPanel({ scheduler });
+  panel.app.project.activeItem = comp;
+  const ui = panel.buildUI({});
+
+  /* Simulate AE dropping the pending task while a modal dialog is open. */
+  scheduler.scheduleCalls[0].canceled = true;
+  ui.onActivate();
+
+  assert.equal(scheduler.pendingCount(), 1);
+  assert.equal(scheduler.scheduleCalls.length, 2);
+  assert.notEqual(effectNamed(root, '[GFX:100:2] Gaussian Blur'), null);
+  ui.onClose();
+});
+
 test('Layer Count display reserves enough width for multi-digit values', () => {
   const roots = Array.from({ length: 12 }, (_, index) => (
     new FakeLayer(101 + index, `Root ${index + 1}`)

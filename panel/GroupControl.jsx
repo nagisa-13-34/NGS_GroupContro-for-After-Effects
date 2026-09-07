@@ -2130,6 +2130,17 @@ function buildUI(thisObj) {
 
     panel.onActivate = function () {
         refreshPanel();
+        /* A scheduleTask callback can be discarded by AE when a modal dialog
+         * was open. Re-arm the one-shot reservation when the panel receives
+         * focus again, then perform one immediate bounded tick so an Effect
+         * added while the panel was inactive is picked up right away. */
+        if (groupControlEffectWatcherState.active === true) {
+            cancelGroupEffectWatcherTask();
+            runGroupEffectWatcherOnce(null, false);
+            scheduleGroupEffectWatcher();
+        } else {
+            watcherOwner = GroupControlEffectWatcherStart();
+        }
     };
 
     panel.onClose = function () {
