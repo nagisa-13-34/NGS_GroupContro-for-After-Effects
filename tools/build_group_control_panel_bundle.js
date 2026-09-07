@@ -34,6 +34,9 @@ if (bundle.indexOf('var GroupControlPanel = buildUI(this);') === -1) {
 }
 
 fs.mkdirSync(path.dirname(outputPath), { recursive: true });
-fs.writeFileSync(outputPath, bundle, 'utf8');
+// ExtendScript uses the file's BOM to detect UTF-8. Without it, Japanese
+// strings can be decoded as the Windows code page and evalFile() fails before
+// buildUI() runs, which presents as an empty ScriptUI panel.
+fs.writeFileSync(outputPath, '\uFEFF' + bundle, 'utf8');
 process.stdout.write(`Wrote ${outputPath}\n`);
 process.stdout.write(`Included: ${includedFiles.join(', ')}\n`);
