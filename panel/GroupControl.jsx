@@ -2131,6 +2131,18 @@ function buildUI(thisObj) {
         this.layout.resize();
     };
 
+    // Docked ScriptUI panels may not perform their first automatic layout
+    // after JSXBIN evaluation. Force one so the controls are not left at
+    // zero-sized bounds beneath the panel header.
+    if (panel.layout !== null && typeof panel.layout !== "undefined") {
+        if (typeof panel.layout.layout === "function") {
+            panel.layout.layout(true);
+        }
+        if (typeof panel.layout.resize === "function") {
+            panel.layout.resize();
+        }
+    }
+
     refreshPanel();
     watcherOwner = GroupControlEffectWatcherStart();
 
