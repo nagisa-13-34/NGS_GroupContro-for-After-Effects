@@ -690,7 +690,7 @@ test('Create Group initializes Layer Count from the current selection', () => {
     new FakeLayer(102, 'Selected 2'),
     new FakeLayer(103, 'Selected 3'),
   ];
-  const group = new FakeLayer(200, '[G] Group', { nullLayer: true });
+  const group = new FakeLayer(200, '[G] Group', { nullLayer: true, groupControl: false });
   const layers = [...selected];
   const comp = {
     layersList: layers,
