@@ -759,6 +759,22 @@ function GroupControlEffectWatcherTick(generation) {
     return runGroupEffectWatcherOnce(owner, true);
 }
 
+/*
+ * scheduleTask evaluates its string in the ExtendScript global scope. Some
+ * JSXBIN encoders wrap the source in a private function, so a top-level
+ * declaration alone is not visible to that later evaluation. Publish the
+ * callback explicitly while retaining the simple callback string for older
+ * hosts and the test adapter.
+ */
+try {
+    if (typeof $ !== "undefined" && $.global !== null &&
+            typeof $.global !== "undefined") {
+        $.global.GroupControlEffectWatcherTick = GroupControlEffectWatcherTick;
+    }
+} catch (watcherExportError) {
+    /* Older hosts may not expose $.global; the local declaration still works. */
+}
+
 function startGroupEffectWatcher() {
     var hostApp;
     var owner;
