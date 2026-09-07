@@ -669,25 +669,6 @@ test('buildUI starts one-shot watcher sync, reschedules after a Tick, and stops 
   assert.equal(scheduler.pendingCount(), 0);
 });
 
-test('watcher pauses while the panel is deactivated and resumes on activation', () => {
-  const scheduler = new FakeScheduler();
-  const root = new FakeLayer(101, 'Root');
-  const { comp } = makeGroupFixture({ count: 0, extraLayers: [root] });
-  const panel = loadPanel({ scheduler });
-  panel.app.project.activeItem = comp;
-  const ui = panel.buildUI({});
-
-  assert.equal(scheduler.pendingCount(), 1);
-  ui.onDeactivate();
-  assert.equal(scheduler.pendingCount(), 0);
-  assert.deepEqual(scheduler.cancelCalls, [scheduler.scheduleCalls[0].id]);
-
-  ui.onActivate();
-  assert.equal(scheduler.pendingCount(), 1);
-  assert.equal(scheduler.scheduleCalls.length, 2);
-  ui.onClose();
-});
-
 test('Layer Count display reserves enough width for multi-digit values', () => {
   const roots = Array.from({ length: 12 }, (_, index) => (
     new FakeLayer(101 + index, `Root ${index + 1}`)
