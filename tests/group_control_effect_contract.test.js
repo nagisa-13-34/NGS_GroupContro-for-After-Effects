@@ -28,7 +28,7 @@ test('Group Control exposes the requested effect and one Layer Count slider', ()
 
   assert.match(header, /GROUP_CONTROL_EFFECT_DISPLAY_NAME\s+"Group Control"/);
   assert.match(header, /GROUP_CONTROL_EFFECT_MATCH_NAME\s+"NGS_GroupControl"/);
-  assert.match(header, /GROUP_CONTROL_LAYER_COUNT_MATCH_NAME\s+"NGS_GroupControl-LayerCount"/);
+  assert.match(params, /GROUP_CONTROL_LAYER_COUNT_MATCH_NAME\s+"NGS_GroupControl-LayerCount"/);
   assert.match(buildConfig, /GROUP_CONTROL_EFFECT_VERSION\s+524289/);
   assert.match(buildConfig, /GROUP_CONTROL_EFFECT_OUT_FLAGS\s+0x02000000/);
   assert.match(buildConfig, /GROUP_CONTROL_EFFECT_OUT_FLAGS_2\s+0x08000000/);
@@ -36,6 +36,7 @@ test('Group Control exposes the requested effect and one Layer Count slider', ()
   assert.match(params, /GROUP_CONTROL_LAYER_COUNT_MAX\s+9999/);
   assert.match(params, /GROUP_CONTROL_LAYER_COUNT_DEFAULT\s+0/);
   assert.match(params, /GROUP_CONTROL_LAYER_COUNT_DISK_ID\s*=\s*1/);
+  assert.match(params, /GROUP_CONTROL_LAYER_COUNT_HOST_MATCH_NAME\s+"NGS_GroupControl-0001"/);
   assert.equal((source.match(/\bPF_ADD_SLIDER\s*\(/g) || []).length, 1);
   assert.match(source, /out_data->num_params\s*=\s*GROUP_CONTROL_NUM_PARAMS/);
   assert.match(source, /out_data->my_version\s*=\s*GROUP_CONTROL_EFFECT_VERSION/);
@@ -70,10 +71,19 @@ test('Windows and macOS projects require an explicit SDK_ROOT and build the plug
   assert.match(windowsProject, /SDK_ROOT/);
   assert.match(windowsProject, /TargetExt>\.aex<\/TargetExt>/);
   assert.match(windowsProject, /GroupControl\.cpp/);
+  assert.match(windowsProject, /<AdditionalInputs>.*GroupControlBuildConfig\.h/s);
   assert.match(windowsProject, /<RuntimeLibrary>MultiThreadedDebug<\/RuntimeLibrary>/);
   assert.match(windowsProject, /<RuntimeLibrary>MultiThreaded<\/RuntimeLibrary>/);
   assert.doesNotMatch(windowsProject, /<RuntimeLibrary>MultiThreaded(?:Debug)?DLL<\/RuntimeLibrary>/);
   assert.match(macProject, /SDK_ROOT/);
   assert.match(macProject, /WRAPPER_EXTENSION\s*=\s*plugin/);
   assert.match(macProject, /GroupControl\.cpp/);
+  assert.match(macProject, /ARCHS\s*=\s*"arm64 x86_64"/);
+  assert.match(macProject, /ONLY_ACTIVE_ARCH\s*=\s*NO/);
+  assert.match(macProject, /REZ_PREPROCESSOR_DEFINITIONS\s*=\s*__MACH__/);
+  const macPlist = read('plugin/mac/GroupControl.plugin-Info.plist');
+  assert.match(macPlist, /CFBundleExecutable/);
+  assert.match(macPlist, /<string>GroupControl<\/string>/);
+  assert.match(macPlist, /CFBundlePackageType[\s\S]*<string>eFKT<\/string>/);
+  assert.match(macPlist, /CFBundleSignature[\s\S]*<string>FXTC<\/string>/);
 });

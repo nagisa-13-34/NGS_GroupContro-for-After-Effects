@@ -1,0 +1,125 @@
+name: Build macOS After Effects plugin
+
+on:
+  workflow_dispatch:
+    inputs:
+      sdk_release_tag:
+        description: Private release tag containing the Adobe After Effects macOS SDK archive
+        required: true
+        default: build-assets-25.6
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: group-control-macos-plugin-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: macOS universal plugin
+    runs-on: macos-15
+    timeout-minutes: 45
+
+    env:
+      SDK_ASSET: AfterEffectsSDK_25.6_61_mac.zip
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Require a private repository for SDK assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          is_private="$(gh repo view "$GITHUB_REPOSITORY" --json isPrivate --jq '.isPrivate')"
+          if [ "$is_private" != "true" ]; then
+            echo "::error::This workflow downloads the Adobe SDK from a release asset. Keep the repository private."
+            exit 1
+          fi
+
+      - name: Download the private After Effects SDK asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          assets_dir="$RUNNER_TEMP/ngs-assets"
+          mkdir -p "$assets_dir"
+          gh release download "${{ inputs.sdk_release_tag }}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "$SDK_ASSET" \
+            --dir "$assets_dir" \
+            --clobber
+          test -s "$assets_dir/$SDK_ASSET"
+
+      - name: Extract the Adobe After Effects macOS SDK
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/ngs-assets/$SDK_ASSET"
+          extraction_dir="$RUNNER_TEMP/ae-sdk-archive"
+          mkdir -p "$extraction_dir"
+          unzip -q "$archive" -d "$extraction_dir"
+
+          extract_script="$(find "$extraction_dir" -type f -name extractzstd.sh -print -quit)"
+          test -n "$extract_script"
+          sdk_package_dir="$(dirname "$extract_script")"
+          cd "$sdk_package_dir"
+          test -f ./zstd
+          chmod +x ./extractzstd.sh ./zstd
+          xattr -r -c . || true
+          ./extractzstd.sh
+
+          header="$(find "$sdk_package_dir" -type f -path '*/Examples/Headers/AE_Effect.h' -print -quit)"
+          test -n "$header"
+          sdk_root="${header%/Examples/Headers/AE_Effect.h}"
+          echo "AE_SDK_ROOT=$sdk_root" >> "$GITHUB_ENV"
+
+      - name: Build the universal .plugin bundle
+        run: |
+          set -euo pipefail
+          output_dir="$RUNNER_TEMP/ngs-plugin-build"
+          xcodebuild \
+            -project plugin/mac/GroupControl.xcodeproj \
+            -target GroupControl \
+            -configuration Release \
+            SDK_ROOT="$AE_SDK_ROOT" \
+            ARCHS="arm64 x86_64" \
+            ONLY_ACTIVE_ARCH=NO \
+            CONFIGURATION_BUILD_DIR="$output_dir" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO
+
+      - name: Verify and package the .plugin bundle
+        run: |
+          set -euo pipefail
+          bundle="$RUNNER_TEMP/ngs-plugin-build/GroupControl.plugin"
+          binary="$bundle/Contents/MacOS/GroupControl"
+          test -d "$bundle"
+          test -f "$bundle/Contents/Info.plist"
+          test -f "$bundle/Contents/PkgInfo"
+          test -f "$binary"
+          plutil -lint "$bundle/Contents/Info.plist"
+          file "$binary"
+          architectures="$(lipo -info "$binary")"
+          echo "$architectures"
+          echo "$architectures" | grep -q arm64
+          echo "$architectures" | grep -q x86_64
+
+          output_dir="$RUNNER_TEMP/ngs-output"
+          mkdir -p "$output_dir"
+          ditto -c -k --sequesterRsrc --keepParent \
+            "$bundle" "$output_dir/NGS_GroupControl_macos-universal.zip"
+          test -s "$output_dir/NGS_GroupControl_macos-universal.zip"
+          unzip -Z1 "$output_dir/NGS_GroupControl_macos-universal.zip" | \
+            grep -q '^GroupControl.plugin/Contents/MacOS/GroupControl$'
+          shasum -a 256 "$output_dir/NGS_GroupControl_macos-universal.zip"
+
+      - name: Upload the macOS plugin artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: NGS_GroupControl-macos-universal
+          path: ${{ runner.temp }}/ngs-output/NGS_GroupControl_macos-universal.zip
+          if-no-files-found: error
+          retention-days: 14

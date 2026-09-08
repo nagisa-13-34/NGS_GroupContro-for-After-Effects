@@ -98,6 +98,7 @@
   <ItemGroup>
     <CustomBuild Include="..\GroupControl\GroupControlPiPL.r">
       <FileType>Document</FileType>
+      <AdditionalInputs>..\GroupControl\GroupControlBuildConfig.h;%(AdditionalInputs)</AdditionalInputs>
       <Command>"$(GroupControlClExe)" /nologo /I "$(SDK_ROOT)\Examples\Headers" /EP "%(FullPath)" &gt; "$(IntDir)GroupControlPiPL.rr"
 "$(SDK_ROOT)\Examples\Resources\PiPLtool.exe" "$(IntDir)GroupControlPiPL.rr" "$(IntDir)GroupControlPiPL.rrc"
 "$(GroupControlClExe)" /nologo /D MSWindows /EP "$(IntDir)GroupControlPiPL.rrc" &gt; "$(IntDir)GroupControlPiPL.rc"</Command>

@@ -2,6 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>CFBundleExecutable</key>
+	<string>GroupControl</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleIdentifier</key>
@@ -9,7 +11,9 @@
 	<key>CFBundleName</key>
 	<string>Group Control</string>
 	<key>CFBundlePackageType</key>
-	<string>BNDL</string>
+	<string>eFKT</string>
+	<key>CFBundleSignature</key>
+	<string>FXTC</string>
 	<key>CFBundleShortVersionString</key>
 	<string>1.0</string>
 	<key>CFBundleVersion</key>

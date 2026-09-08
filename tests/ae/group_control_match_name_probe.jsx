@@ -31,31 +31,43 @@
         var effects = layer.property("ADBE Effect Parade");
         var effect = null;
         var addEffectError = "";
+        var expectedEffectMatchName = "NGS_GroupControl";
+        var expectedLayerCountMatchName = "NGS_GroupControl-0001";
 
         try {
-            effect = effects.addProperty("NGS_GroupControl");
+            effect = effects.addProperty(expectedEffectMatchName);
         } catch (matchNameError) {
             addEffectError = clean(matchNameError);
-            try {
-                effect = effects.addProperty("Group Control");
-            } catch (displayNameError) {
-                addEffectError += " | display name: " + clean(displayNameError);
-            }
         }
 
-        if (effect === null) {
-            record("status", "effect_not_added");
+        if (effect === null || effect.matchName !== expectedEffectMatchName) {
+            record("status", "fail");
             record("add_effect_error", addEffectError);
         } else {
-            record("status", "ok");
             record("effect_name", effect.name);
             record("effect_match_name", effect.matchName);
             record("effect_property_count", effect.numProperties);
+            var defaultValue = null;
+            var changedValue = null;
             for (var index = 1; index <= effect.numProperties; index += 1) {
                 var property = effect.property(index);
                 record("property_" + index + "_name", property.name);
                 record("property_" + index + "_match_name", property.matchName);
                 record("property_" + index + "_index", property.propertyIndex);
+                if (property.name === "Layer Count") {
+                    defaultValue = property.value;
+                    property.setValue(7);
+                    changedValue = property.value;
+                    property.setValue(defaultValue);
+                }
+            }
+            if (defaultValue === 0 && changedValue === 7 &&
+                    effect.numProperties >= 1 &&
+                    effect.property(1).matchName === expectedLayerCountMatchName) {
+                record("status", "ok");
+            } else {
+                record("status", "fail");
+                record("expected_layer_count_match_name", expectedLayerCountMatchName);
             }
         }
     } catch (error) {

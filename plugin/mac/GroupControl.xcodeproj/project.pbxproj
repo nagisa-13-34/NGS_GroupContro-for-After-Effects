@@ -16,6 +16,7 @@
 		A10000110000000000000011 /* GroupControl.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; name = GroupControl.cpp; path = ../GroupControl/GroupControl.cpp; sourceTree = SOURCE_ROOT; };
 		A10000120000000000000012 /* GroupControl.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = GroupControl.h; path = ../GroupControl/GroupControl.h; sourceTree = SOURCE_ROOT; };
 		A10000150000000000000015 /* GroupControlBuildConfig.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = GroupControlBuildConfig.h; path = ../GroupControl/GroupControlBuildConfig.h; sourceTree = SOURCE_ROOT; };
+		A10000160000000000000016 /* GroupControlParams.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = GroupControlParams.h; path = ../GroupControl/GroupControlParams.h; sourceTree = SOURCE_ROOT; };
 		A10000130000000000000013 /* GroupControlPiPL.r */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.rez; name = GroupControlPiPL.r; path = ../GroupControl/GroupControlPiPL.r; sourceTree = SOURCE_ROOT; };
 		A10000140000000000000014 /* GroupControl.plugin-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = GroupControl.plugin-Info.plist; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
@@ -27,6 +28,7 @@
 				A10000110000000000000011 /* GroupControl.cpp */,
 				A10000120000000000000012 /* GroupControl.h */,
 				A10000150000000000000015 /* GroupControlBuildConfig.h */,
+				A10000160000000000000016 /* GroupControlParams.h */,
 				A10000130000000000000013 /* GroupControlPiPL.r */,
 				A10000140000000000000014 /* GroupControl.plugin-Info.plist */,
 				A10000210000000000000021 /* Products */,
@@ -112,6 +114,7 @@
 		A10000600000000000000060 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ARCHS = "arm64 x86_64";
 				CLANG_CXX_LANGUAGE_STANDARD = "c++17";
 				GCC_PREPROCESSOR_DEFINITIONS = (
 					"$(inherited)",
@@ -125,10 +128,13 @@
 					"$(SRCROOT)/../GroupControl",
 				);
 				PRODUCT_NAME = GroupControl;
+				MACOSX_DEPLOYMENT_TARGET = 11.0;
+				ONLY_ACTIVE_ARCH = NO;
 				REZ_SEARCH_PATHS = (
 					"$(SDK_ROOT)/Examples/Headers",
 					"$(SDK_ROOT)/Examples/Resources",
 				);
+				REZ_PREPROCESSOR_DEFINITIONS = __MACH__;
 				SDKROOT = macosx;
 				WRAPPER_EXTENSION = plugin;
 			};
@@ -137,6 +143,7 @@
 		A10000610000000000000061 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ARCHS = "arm64 x86_64";
 				CLANG_CXX_LANGUAGE_STANDARD = "c++17";
 				GCC_PREPROCESSOR_DEFINITIONS = (
 					"$(inherited)",
@@ -150,10 +157,13 @@
 					"$(SRCROOT)/../GroupControl",
 				);
 				PRODUCT_NAME = GroupControl;
+				MACOSX_DEPLOYMENT_TARGET = 11.0;
+				ONLY_ACTIVE_ARCH = NO;
 				REZ_SEARCH_PATHS = (
 					"$(SDK_ROOT)/Examples/Headers",
 					"$(SDK_ROOT)/Examples/Resources",
 				);
+				REZ_PREPROCESSOR_DEFINITIONS = __MACH__;
 				SDKROOT = macosx;
 				WRAPPER_EXTENSION = plugin;
 			};
