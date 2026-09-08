@@ -172,6 +172,7 @@
 		A10000700000000000000070 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				GENERATE_PKGINFO_FILE = YES;
 				INFOPLIST_FILE = "$(SRCROOT)/GroupControl.plugin-Info.plist";
 				PRODUCT_BUNDLE_IDENTIFIER = com.ngs.aftereffects.groupcontrol;
 			};
@@ -180,6 +181,7 @@
 		A10000710000000000000071 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				GENERATE_PKGINFO_FILE = YES;
 				INFOPLIST_FILE = "$(SRCROOT)/GroupControl.plugin-Info.plist";
 				PRODUCT_BUNDLE_IDENTIFIER = com.ngs.aftereffects.groupcontrol;
 			};

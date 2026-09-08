@@ -81,6 +81,7 @@ test('Windows and macOS projects require an explicit SDK_ROOT and build the plug
   assert.match(macProject, /ARCHS\s*=\s*"arm64 x86_64"/);
   assert.match(macProject, /ONLY_ACTIVE_ARCH\s*=\s*NO/);
   assert.match(macProject, /REZ_PREPROCESSOR_DEFINITIONS\s*=\s*__MACH__/);
+  assert.match(macProject, /GENERATE_PKGINFO_FILE\s*=\s*YES/);
   const macPlist = read('plugin/mac/GroupControl.plugin-Info.plist');
   assert.match(macPlist, /CFBundleExecutable/);
   assert.match(macPlist, /<string>GroupControl<\/string>/);
