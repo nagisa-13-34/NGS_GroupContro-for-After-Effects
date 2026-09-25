@@ -688,6 +688,43 @@ test('panel activation re-arms the watcher after a lost schedule task', () => {
   ui.onClose();
 });
 
+test('Effect Layer Count changes automatically apply after the value settles', () => {
+  const scheduler = new FakeScheduler();
+  const root = new FakeLayer(101, 'Root');
+  const secondRoot = new FakeLayer(102, 'Second Root');
+  const { comp, group } = makeGroupFixture({ count: 1, extraLayers: [root, secondRoot] });
+  const app = {
+    project: { activeItem: comp },
+    scheduleTask: scheduler.scheduleTask.bind(scheduler),
+    cancelTask: scheduler.cancelTask.bind(scheduler),
+    beginUndoGroup() {},
+    endUndoGroup() {},
+  };
+  const panel = loadPanel({ scheduler, appOverride: app });
+
+  panel.GroupControlEffectWatcherRunOnce();
+  assert.equal(root.parent, null);
+  assert.equal(secondRoot.parent, null);
+
+  group.effects.property(1).property(1).setValue(2);
+  panel.GroupControlEffectWatcherRunOnce();
+  assert.equal(root.parent, null);
+  assert.equal(secondRoot.parent, null);
+  assert.equal(panel.groupControlEffectWatcherState.layerCountWatch.pending.length, 1);
+
+  panel.groupControlEffectWatcherState.layerCountWatch.pending[0].changedAt = Date.now();
+  panel.GroupControlEffectWatcherRunOnce();
+  assert.equal(root.parent, null);
+  assert.equal(secondRoot.parent, null);
+
+  panel.groupControlEffectWatcherState.layerCountWatch.pending[0].changedAt = 0;
+  panel.GroupControlEffectWatcherRunOnce();
+  assert.equal(root.parent, group);
+  assert.equal(secondRoot.parent, group);
+  assert.equal(panel.groupControlEffectWatcherState.layerCountWatch.pending.length, 0);
+  assert.equal(group.marker.numKeys, 1);
+});
+
 test('Layer Count display reserves enough width for multi-digit values', () => {
   const roots = Array.from({ length: 12 }, (_, index) => (
     new FakeLayer(101 + index, `Root ${index + 1}`)

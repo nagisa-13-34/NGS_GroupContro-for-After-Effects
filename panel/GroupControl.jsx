@@ -38,6 +38,7 @@ var STATUS_UNGROUP_COMPLETE = "Ungroup完了。";
 var groupControlUI = null;
 var GROUP_CONTROL_EFFECT_SYNC_INTERVAL_MS = 200;
 var GROUP_CONTROL_EFFECT_SYNC_PENDING_INTERVAL_MS = 10;
+var GROUP_CONTROL_LAYER_COUNT_AUTO_APPLY_DEBOUNCE_MS = 350;
 var GROUP_CONTROL_EFFECT_WATCHER_STATE_KEY = "__NGS_GroupControlEffectWatcherState";
 var groupControlEffectWatcherRuntimeToken = {};
 var groupControlEffectWatcherStateGlobal = this;
@@ -69,7 +70,8 @@ if (typeof groupControlEffectWatcherStateGlobal[GROUP_CONTROL_EFFECT_WATCHER_STA
         owner: null,
         generation: 0,
         runtimeToken: null,
-        app: null
+        app: null,
+        layerCountWatch: null
     };
 }
 
@@ -105,6 +107,19 @@ if (typeof groupControlEffectWatcherState.runtimeToken === "undefined") {
 }
 if (typeof groupControlEffectWatcherState.app === "undefined") {
     groupControlEffectWatcherState.app = null;
+}
+if (groupControlEffectWatcherState.layerCountWatch === null ||
+        typeof groupControlEffectWatcherState.layerCountWatch === "undefined") {
+    groupControlEffectWatcherState.layerCountWatch = {
+        comp: null,
+        groupId: 0,
+        count: null,
+        pending: []
+    };
+}
+if (Object.prototype.toString.call(
+        groupControlEffectWatcherState.layerCountWatch.pending) !== "[object Array]") {
+    groupControlEffectWatcherState.layerCountWatch.pending = [];
 }
 
 function makeFailure(status) {
@@ -552,6 +567,15 @@ function getGroupEffectWatcherProject() {
     return hostApp.project;
 }
 
+function resetGroupLayerCountWatcher() {
+    var watch = groupControlEffectWatcherState.layerCountWatch;
+
+    watch.comp = null;
+    watch.groupId = 0;
+    watch.count = null;
+    watch.pending = [];
+}
+
 function resetGroupEffectWatcherSession(discardSession) {
     var session = groupControlEffectWatcherState.session;
 
@@ -566,6 +590,7 @@ function resetGroupEffectWatcherSession(discardSession) {
 
     groupControlEffectWatcherState.comp = null;
     groupControlEffectWatcherState.project = null;
+    resetGroupLayerCountWatcher();
     if (discardSession === true) {
         groupControlEffectWatcherState.session = null;
     }
@@ -649,6 +674,164 @@ function getGroupEffectWatcherTargetRange(group, comp) {
     return GroupControlCore.getTargetIndexRange(group.index, count, comp.numLayers);
 }
 
+function rememberGroupLayerCount(group, comp, count) {
+    var watch = groupControlEffectWatcherState.layerCountWatch;
+    var groupId = getLayerId(group);
+    var index;
+
+    watch.comp = comp;
+    watch.groupId = groupId;
+    watch.count = GroupControlCore.clampLayerCount(count, comp.numLayers);
+    for (index = watch.pending.length - 1; index >= 0; index -= 1) {
+        if (watch.pending[index].groupId === groupId) {
+            watch.pending.splice(index, 1);
+        }
+    }
+}
+
+function applyPendingGroupLayerCountChange(comp, nowValue) {
+    var watch = groupControlEffectWatcherState.layerCountWatch;
+    var index;
+    var pending;
+    var group;
+    var count;
+    var result;
+
+    if (watch.pending.length === 0) {
+        return false;
+    }
+
+    if (watch.comp !== comp) {
+        resetGroupLayerCountWatcher();
+        watch.comp = comp;
+        return false;
+    }
+
+    for (index = 0; index < watch.pending.length; index += 1) {
+        pending = watch.pending[index];
+        group = findLayerById(comp, pending.groupId);
+        if (group === null || !isGroupLayer(group)) {
+            watch.pending.splice(index, 1);
+            return false;
+        }
+
+        try {
+            count = getLayerCount(group, comp);
+        } catch (countError) {
+            watch.pending.splice(index, 1);
+            return false;
+        }
+
+        if (count === pending.originalCount) {
+            if (watch.groupId === pending.groupId) {
+                watch.count = count;
+            }
+            watch.pending.splice(index, 1);
+            return false;
+        }
+
+        if (count !== pending.count) {
+            pending.count = count;
+            pending.changedAt = nowValue;
+            if (watch.groupId === pending.groupId) {
+                watch.count = count;
+            }
+            continue;
+        }
+
+        if (watch.groupId === pending.groupId) {
+            watch.count = count;
+        }
+
+        if (nowValue - pending.changedAt < GROUP_CONTROL_LAYER_COUNT_AUTO_APPLY_DEBOUNCE_MS) {
+            continue;
+        }
+
+        watch.pending.splice(index, 1);
+        watch.groupId = pending.groupId;
+        watch.count = count;
+        result = beginUndoAction("Undo Auto Apply Group", function () {
+            return applyGroupCore(group, comp);
+        });
+        setStatusText(result.status);
+        refreshPanel();
+        return true;
+    }
+
+    return false;
+}
+
+function watchSelectedGroupLayerCount(comp) {
+    var watch = groupControlEffectWatcherState.layerCountWatch;
+    var nowValue = new Date().getTime();
+    var selection;
+    var group;
+    var groupId;
+    var count;
+    var index;
+    var pending;
+
+    if (watch.comp !== comp) {
+        resetGroupLayerCountWatcher();
+        watch.comp = comp;
+    }
+
+    applyPendingGroupLayerCountChange(comp, nowValue);
+
+    selection = getSelectedGroup(comp);
+    if (selection.error !== null) {
+        watch.groupId = 0;
+        watch.count = null;
+        return;
+    }
+
+    group = selection.group;
+    groupId = getLayerId(group);
+    try {
+        count = getLayerCount(group, comp);
+    } catch (readError) {
+        watch.groupId = 0;
+        watch.count = null;
+        return;
+    }
+
+    if (watch.groupId !== groupId || watch.count === null) {
+        watch.groupId = groupId;
+        watch.count = count;
+        return;
+    }
+
+    if (watch.count === count) {
+        return;
+    }
+
+    pending = null;
+    for (index = 0; index < watch.pending.length; index += 1) {
+        if (watch.pending[index].groupId === groupId) {
+            pending = watch.pending[index];
+            break;
+        }
+    }
+    if (pending !== null) {
+        if (count === pending.originalCount) {
+            watch.pending.splice(index, 1);
+        } else {
+            pending.count = count;
+            pending.changedAt = nowValue;
+        }
+    } else {
+        watch.pending.push({
+            groupId: groupId,
+            originalCount: watch.count,
+            count: count,
+            changedAt: nowValue
+        });
+    }
+
+    watch.count = count;
+    refreshPanel();
+}
+
 function createGroupEffectWatcherSession() {
     if (typeof GroupControlEffectSync === "undefined" ||
             GroupControlEffectSync === null ||
@@ -722,6 +905,8 @@ function runGroupEffectWatcherOnce(owner, reschedule) {
             groupControlEffectWatcherState.comp = comp;
             groupControlEffectWatcherState.project = project;
         }
+
+        watchSelectedGroupLayerCount(comp);
 
         session = ensureGroupEffectWatcherSession();
         if (session !== null && typeof session !== "undefined" &&
@@ -1994,6 +2179,7 @@ function changeLayerCount(delta) {
         nextValue = GroupControlCore.clampLayerCount(
             getLayerCount(group, comp) + delta, comp.numLayers);
         setLayerCount(group, comp, nextValue);
+        rememberGroupLayerCount(group, comp, nextValue);
         result = applyGroupCore(group, comp);
         setStatusText(result.status);
         return result;
