@@ -6,7 +6,7 @@
  *
  * This file intentionally stays in ExtendScript-compatible ES3 syntax. The
  * panel owns the AE object model, while GroupControlCore owns pure logic and
- * the persistent Group Marker format.
+ * persistent Group state stored in the Group Null's comment.
  */
 
 var GROUP_CONTROL_EFFECT_MATCH_NAME = "NGS_GroupControl";
@@ -15,22 +15,24 @@ var GROUP_CONTROL_LAYER_COUNT_REQUESTED_MATCH_NAME = "NGS_GroupControl-LayerCoun
 var GROUP_CONTROL_LAYER_COUNT_HOST_MATCH_NAME = "NGS_GroupControl-0001";
 var GROUP_CONTROL_LAYER_COUNT_DISPLAY_NAME = "Layer Count";
 var GROUP_CONTROL_GROUP_NAME = "[G] Group";
+var GROUP_CONTROL_COMMENT_STATE_BEGIN = "<<<NGS_GROUP_CONTROL_STATE_BEGIN>>>";
+var GROUP_CONTROL_COMMENT_STATE_END = "<<<NGS_GROUP_CONTROL_STATE_END>>>";
 
 var STATUS_NO_COMP = "コンポジションを開いてください。";
 var STATUS_NO_GROUP = "Group Nullを選択してください。";
 var STATUS_MULTIPLE_GROUPS = "Group Nullを1つだけ選択してください。";
-var STATUS_MULTIPLE_MARKERS = "Group Markerが複数あるため処理を中断しました。";
-var STATUS_MARKER_SYNTAX = "Group Markerの構文が不正です。";
-var STATUS_MARKER_ID = "Group MarkerのIDが不正です。";
-var STATUS_MARKER_GROUP_MISMATCH = "Group MarkerのgroupIdが一致しません。";
-var STATUS_MARKER_DUPLICATE = "Group MarkerのLayer IDが重複しています。";
-var STATUS_MARKER_SELF_ID = "Group MarkerにGroup Null自身のIDがあります。";
+var STATUS_MULTIPLE_MARKERS = "Group情報が重複しているため処理を中断しました。";
+var STATUS_MARKER_SYNTAX = "Group情報の形式が不正です。";
+var STATUS_MARKER_ID = "Group情報のIDが不正です。";
+var STATUS_MARKER_GROUP_MISMATCH = "Group情報のIDがGroup Nullと一致しません。";
+var STATUS_MARKER_DUPLICATE = "Group情報のLayer IDが重複しています。";
+var STATUS_MARKER_SELF_ID = "Group情報にGroup Null自身のIDがあります。";
 var STATUS_GROUP_KEYS = "Group NullのTransformにキーがあるためApplyを中断しました。";
 var STATUS_APPLY_ROLLBACK = "Applyを中断しました。変更を復元しました。";
 var STATUS_APPLY_ROLLBACK_FAILED = "Applyを中断しました。変更を完全には復元できませんでした。";
-var STATUS_MARKER_CREATED = "Group Markerを新規作成しました。";
-var STATUS_NESTED_MARKER = "外側GroupのGroup MarkerがNested Groupを管理していないためUngroupを中断しました。";
-var STATUS_DIRECT_CHILD_MARKER = "Group Nullの直接子LayerがGroup MarkerにないためUngroupを中断しました。";
+var STATUS_GROUP_STATE_CREATED = "Group情報を保存しました。";
+var STATUS_NESTED_MARKER = "外側Groupの記録にNested GroupがないためUngroupを中断しました。";
+var STATUS_DIRECT_CHILD_MARKER = "Group Nullの直接子Layerに記録がないためUngroupを中断しました。";
 var STATUS_UNGROUP_ROLLBACK = "Ungroupを中断しました。変更を復元しました。";
 var STATUS_UNGROUP_ROLLBACK_FAILED = "Ungroupを中断しました。変更を完全には復元できませんでした。";
 var STATUS_UNGROUP_COMPLETE = "Ungroup完了。";
@@ -1145,7 +1147,167 @@ function getMarkerFirstLine(comment) {
     return lines.length > 0 ? lines[0] : "";
 }
 
-function getManagedMarkerCandidates(group) {
+function getGroupCommentStateBlock(comment) {
+    var source = String(comment || "");
+    var beginIndex = source.indexOf(GROUP_CONTROL_COMMENT_STATE_BEGIN);
+    var secondBeginIndex;
+    var endIndex;
+    var secondEndIndex;
+    var contentStart;
+    var content;
+
+    if (beginIndex < 0) {
+        return {
+            exists: false,
+            valid: true,
+            source: source
+        };
+    }
+
+    secondBeginIndex = source.indexOf(GROUP_CONTROL_COMMENT_STATE_BEGIN,
+        beginIndex + GROUP_CONTROL_COMMENT_STATE_BEGIN.length);
+    endIndex = source.indexOf(GROUP_CONTROL_COMMENT_STATE_END,
+        beginIndex + GROUP_CONTROL_COMMENT_STATE_BEGIN.length);
+    secondEndIndex = endIndex < 0 ? -1 : source.indexOf(
+        GROUP_CONTROL_COMMENT_STATE_END,
+        endIndex + GROUP_CONTROL_COMMENT_STATE_END.length);
+
+    if (secondBeginIndex >= 0 || endIndex < 0 || secondEndIndex >= 0) {
+        return {
+            exists: true,
+            valid: false,
+            source: source
+        };
+    }
+
+    contentStart = beginIndex + GROUP_CONTROL_COMMENT_STATE_BEGIN.length;
+    if (source.substring(contentStart, contentStart + 2) === "\r\n") {
+        contentStart += 2;
+    } else if (source.charAt(contentStart) === "\n" ||
+            source.charAt(contentStart) === "\r") {
+        contentStart += 1;
+    } else {
+        return {
+            exists: true,
+            valid: false,
+            source: source
+        };
+    }
+
+    content = source.substring(contentStart, endIndex);
+    content = content.replace(/[\r\n]+$/, "");
+
+    return {
+        exists: true,
+        valid: true,
+        source: source,
+        startIndex: beginIndex,
+        endIndex: endIndex + GROUP_CONTROL_COMMENT_STATE_END.length,
+        content: content
+    };
+}
+
+function getGroupStateFromComment(group) {
+    var block = getGroupCommentStateBlock(group === null || typeof group === "undefined" ?
+        "" : group.comment);
+    var state = null;
+    var error = null;
+
+    if (!block.exists) {
+        return {
+            exists: false,
+            valid: true,
+            state: null,
+            block: block,
+            error: null
+        };
+    }
+
+    if (!block.valid) {
+        return {
+            exists: true,
+            valid: false,
+            state: null,
+            block: block,
+            error: new Error("Groupコメント内の管理情報が不正です。")
+        };
+    }
+
+    try {
+        state = GroupControlCore.decodeGroupState(block.content);
+    } catch (decodeError) {
+        error = decodeError;
+    }
+
+    return {
+        exists: true,
+        valid: error === null,
+        state: state,
+        block: block,
+        error: error
+    };
+}
+
+function writeGroupStateToComment(group, state) {
+    var currentComment = String(group.comment || "");
+    var block = getGroupCommentStateBlock(currentComment);
+    var groupStateData = GroupControlCore.encodeGroupState({
+        version: 1,
+        groupId: state.groupId,
+        records: state.records
+    });
+    var replacement = GROUP_CONTROL_COMMENT_STATE_BEGIN + "\n" + groupStateData + "\n" +
+        GROUP_CONTROL_COMMENT_STATE_END;
+
+    if (block.exists && !block.valid) {
+        throw new Error("Groupコメント内の管理情報を読み取れません。");
+    }
+
+    if (block.exists) {
+        group.comment = currentComment.substring(0, block.startIndex) + replacement +
+            currentComment.substring(block.endIndex);
+        return false;
+    }
+
+    if (currentComment.length > 0 && !/[\r\n]$/.test(currentComment)) {
+        currentComment += "\n";
+    }
+    if (currentComment.length > 0 && !/[\r\n]{2}$/.test(currentComment)) {
+        currentComment += "\n";
+    }
+    group.comment = currentComment + replacement;
+    return true;
+}
+
+function removeLegacyGroupMarkers(group) {
+    var marker;
+    var candidates;
+    var index;
+
+    try {
+        marker = getMarkerProperty(group);
+        candidates = getLegacyGroupMarkerCandidates(group);
+    } catch (readError) {
+        return false;
+    }
+
+    if (marker === null || typeof marker === "undefined" ||
+            typeof marker.removeKey !== "function") {
+        return false;
+    }
+
+    for (index = candidates.length - 1; index >= 0; index -= 1) {
+        try {
+            marker.removeKey(candidates[index].index);
+        } catch (removeError) {
+            /* Legacy markers are cleanup-only after comment migration. */
+        }
+    }
+
+    return true;
+}
+
+function getLegacyGroupMarkerCandidates(group) {
     var marker = getMarkerProperty(group);
     var candidates = [];
     var index;
@@ -1171,7 +1333,7 @@ function getManagedMarkerCandidates(group) {
     return candidates;
 }
 
-function markerErrorStatus(error) {
+function groupStateErrorStatus(error) {
     var code = error === null || typeof error === "undefined" ? "" : error.code;
     var codes = GroupControlCore.markerErrorCodes;
 
@@ -1190,14 +1352,30 @@ function markerErrorStatus(error) {
     return STATUS_MARKER_SYNTAX;
 }
 
-function validateGroupMarker(group, comp) {
-    var candidates = getManagedMarkerCandidates(group);
+function validateGroupState(group, comp) {
+    var candidates = getLegacyGroupMarkerCandidates(group);
+    var commentState = getGroupStateFromComment(group);
     var markerComment;
     var state;
     var index;
     var record;
 
-    if (candidates.length > 1) {
+    if (commentState.exists) {
+        if (!commentState.valid) {
+            return {
+                valid: false,
+                status: groupStateErrorStatus(commentState.error),
+                candidate: {
+                    source: "comment",
+                    block: commentState.block
+                },
+                state: null
+            };
+        }
+
+        state = commentState.state;
+        candidates = [];
+    } else if (candidates.length > 1) {
         return {
             valid: false,
             status: STATUS_MULTIPLE_MARKERS,
@@ -1206,7 +1384,7 @@ function validateGroupMarker(group, comp) {
         };
     }
 
-    if (candidates.length === 0) {
+    if (!commentState.exists && candidates.length === 0) {
         return {
             valid: true,
             status: null,
@@ -1215,23 +1393,28 @@ function validateGroupMarker(group, comp) {
         };
     }
 
-    markerComment = candidates[0].comment;
-    try {
-        state = GroupControlCore.decodeGroupState(markerComment);
-    } catch (error) {
-        return {
-            valid: false,
-            status: markerErrorStatus(error),
-            candidate: candidates[0],
-            state: null
-        };
+    if (!commentState.exists) {
+        markerComment = candidates[0].comment;
+        try {
+            state = GroupControlCore.decodeGroupState(markerComment);
+        } catch (error) {
+            return {
+                valid: false,
+                status: groupStateErrorStatus(error),
+                candidate: candidates[0],
+                state: null
+            };
+        }
     }
 
     if (state.groupId !== getLayerId(group)) {
         return {
             valid: false,
             status: STATUS_MARKER_GROUP_MISMATCH,
-            candidate: candidates[0],
+            candidate: commentState.exists ? {
+                source: "comment",
+                block: commentState.block
+            } : candidates[0],
             state: null
         };
     }
@@ -1242,7 +1425,10 @@ function validateGroupMarker(group, comp) {
             return {
                 valid: false,
                 status: STATUS_MARKER_ID,
-                candidate: candidates[0],
+                candidate: commentState.exists ? {
+                    source: "comment",
+                    block: commentState.block
+                } : candidates[0],
                 state: null
             };
         }
@@ -1251,7 +1437,10 @@ function validateGroupMarker(group, comp) {
     return {
         valid: true,
         status: null,
-        candidate: candidates[0],
+        candidate: commentState.exists ? {
+            source: "comment",
+            block: commentState.block
+        } : candidates[0],
         state: state
     };
 }
@@ -1455,127 +1644,19 @@ function hasRecordForLayer(state, layerId) {
     return false;
 }
 
-function isMarkerTimeOccupied(marker, time) {
-    var index;
-    var epsilon = 0.0000001;
-
-    for (index = 1; index <= marker.numKeys; index += 1) {
-        if (Math.abs(marker.keyTime(index) - time) < epsilon) {
-            return true;
-        }
-    }
-
-    return false;
-}
-
-function findFirstFreeMarkerTime(marker, comp) {
-    var frameDuration = Number(comp.frameDuration);
-    var time = 0;
-    var attempts = 0;
-    var maximumAttempts;
-
-    if (!isFinite(frameDuration) || frameDuration <= 0) {
-        frameDuration = 1 / 30;
-    }
-
-    maximumAttempts = marker.numKeys + 1;
-    while (attempts <= maximumAttempts) {
-        if (!isMarkerTimeOccupied(marker, time)) {
-            return time;
-        }
-
-        time += frameDuration;
-        attempts += 1;
-    }
-
-    return time;
-}
-
-function findMarkerIndexAtTime(marker, time) {
-    var index;
-    var epsilon = 0.0000001;
-
-    for (index = 1; index <= marker.numKeys; index += 1) {
-        if (Math.abs(marker.keyTime(index) - time) < epsilon) {
-            return index;
-        }
-    }
-
-    return 0;
-}
-
-function setMarkerValueAtKey(marker, index, comment) {
-    var markerValue = new MarkerValue(comment);
-
-    if (typeof marker.setValueAtKey === "function") {
-        marker.setValueAtKey(index, markerValue);
-    } else {
-        marker.setValueAtTime(marker.keyTime(index), markerValue);
-    }
-}
-
-function updateGroupMarker(group, comp, state, existingCandidate) {
-    var marker = getMarkerProperty(group);
-    var comment = GroupControlCore.encodeGroupState(state);
-    var time;
-    var index;
-
-    if (marker === null || typeof marker === "undefined") {
-        throw new Error("Group Markerプロパティが見つかりません。");
-    }
-
-    if (existingCandidate !== null && typeof existingCandidate !== "undefined") {
-        setMarkerValueAtKey(marker, existingCandidate.index, comment);
-        return {
-            created: false,
-            index: existingCandidate.index,
-            time: existingCandidate.time,
-            comment: comment
-        };
-    }
-
-    time = findFirstFreeMarkerTime(marker, comp);
-    marker.setValueAtTime(time, new MarkerValue(comment));
-    index = findMarkerIndexAtTime(marker, time);
-    if (index <= 0) {
-        throw new Error("Group Markerを作成できませんでした。");
-    }
+function updateGroupState(group, state) {
+    var created = writeGroupStateToComment(group, state);
 
     return {
-        created: true,
-        index: index,
-        time: time,
-        comment: comment
+        created: created,
+        source: "comment"
     };
 }
 
-function restoreMarkerSnapshot(group, snapshot, newMarkerInfo) {
-    var marker = getMarkerProperty(group);
-    var index;
-    var value;
-    var comment;
-
-    if (marker === null || typeof marker === "undefined") {
-        return false;
-    }
-
+function restoreGroupCommentSnapshot(group, snapshot) {
     try {
-        if (snapshot !== null && typeof snapshot !== "undefined" && snapshot.exists) {
-            setMarkerValueAtKey(marker, snapshot.index, snapshot.comment);
-            return true;
-        }
-
-        if (newMarkerInfo !== null && typeof newMarkerInfo !== "undefined") {
-            index = findMarkerIndexAtTime(marker, newMarkerInfo.time);
-            if (index > 0) {
-                value = marker.keyValue(index);
-                comment = value === null || typeof value === "undefined" ? "" : String(value.comment || "");
-                if (comment === newMarkerInfo.comment) {
-                    marker.removeKey(index);
-                }
-            }
-        }
-
+        group.comment = snapshot === null || typeof snapshot === "undefined" ?
+            "" : String(snapshot);
         return true;
     } catch (error) {
         return false;
@@ -1583,23 +1664,22 @@ function restoreMarkerSnapshot(group, snapshot, newMarkerInfo) {
 }
 
 function buildApplyStatus(candidateCount, attachedCount, releasedCount,
-        externalParentSkipped, expressionSkipped, cycleSkipped, markerCreated) {
+        externalParentSkipped, expressionSkipped, cycleSkipped, groupStateCreated) {
     var summary = "Apply完了: 候補数=" + candidateCount + "件 / 接続=" + attachedCount +
         "件 / 解除=" + releasedCount + "件 / 外部Parentスキップ=" +
         externalParentSkipped + "件 / Expression付きRootスキップ=" +
         expressionSkipped + "件 / 循環Parentスキップ=" + cycleSkipped + "件";
 
-    return markerCreated ? STATUS_MARKER_CREATED + "\n" + summary : summary;
+    return groupStateCreated ? STATUS_GROUP_STATE_CREATED + "\n" + summary : summary;
 }
 
 function applyGroupCore(group, comp) {
-    var markerValidation;
+    var groupStateValidation;
     var targetLayers;
     var rootLayers;
     var backups;
     var oldState;
-    var existingCandidate;
-    var markerSnapshot;
+    var commentSnapshot;
     var released;
     var releasedById;
     var oldRecordsById;
@@ -1609,7 +1689,7 @@ function applyGroupCore(group, comp) {
     var expressionSkipped = 0;
     var cycleSkipped = 0;
     var attachedCount = 0;
-    var markerInfo = null;
+    var groupStateInfo = null;
     var index;
     var layer;
     var parentId;
@@ -1617,7 +1697,7 @@ function applyGroupCore(group, comp) {
     var originalParentId;
     var status;
     var rollbackParents;
-    var rollbackMarker;
+    var rollbackComment;
 
     if (comp === null || typeof comp === "undefined") {
         return makeFailure(STATUS_NO_COMP);
@@ -1627,9 +1707,9 @@ function applyGroupCore(group, comp) {
         return makeFailure(STATUS_NO_GROUP);
     }
 
-    markerValidation = validateGroupMarker(group, comp);
-    if (!markerValidation.valid) {
-        return makeFailure(markerValidation.status);
+    groupStateValidation = validateGroupState(group, comp);
+    if (!groupStateValidation.valid) {
+        return makeFailure(groupStateValidation.status);
     }
 
     if (groupHasTransformKeys(group)) {
@@ -1637,16 +1717,8 @@ function applyGroupCore(group, comp) {
     }
 
     try {
-        oldState = markerValidation.state;
-        existingCandidate = markerValidation.candidate;
-        markerSnapshot = existingCandidate === null ? {
-            exists: false
-        } : {
-            exists: true,
-            index: existingCandidate.index,
-            time: existingCandidate.time,
-            comment: existingCandidate.comment
-        };
+        oldState = groupStateValidation.state;
+        commentSnapshot = String(group.comment || "");
 
         targetLayers = getTargetLayers(group, comp);
         backups = collectParentBackups(comp, targetLayers, oldState);
@@ -1706,14 +1778,15 @@ function applyGroupCore(group, comp) {
             attachedCount += 1;
         }
 
-        markerInfo = updateGroupMarker(group, comp, {
+        groupStateInfo = updateGroupState(group, {
             version: 1,
             groupId: getLayerId(group),
             records: attachedRecords
-        }, existingCandidate);
+        });
 
         status = buildApplyStatus(targetLayers.length, attachedCount, released.length,
-            externalParentSkipped, expressionSkipped, cycleSkipped, markerInfo.created);
+            externalParentSkipped, expressionSkipped, cycleSkipped, groupStateInfo.created);
+        removeLegacyGroupMarkers(group);
         return {
             ok: true,
             status: status,
@@ -1723,14 +1796,14 @@ function applyGroupCore(group, comp) {
             externalParentSkipped: externalParentSkipped,
             expressionSkipped: expressionSkipped,
             cycleSkipped: cycleSkipped,
-            markerCreated: markerInfo.created
+            groupStateCreated: groupStateInfo.created
         };
     } catch (error) {
         rollbackParents = backups === null || typeof backups === "undefined" ? true :
             restoreParentBackups(backups);
-        rollbackMarker = restoreMarkerSnapshot(group, markerSnapshot, markerInfo !== null && markerInfo.created ? markerInfo : null);
+        rollbackComment = restoreGroupCommentSnapshot(group, commentSnapshot);
 
-        if (rollbackParents && rollbackMarker) {
+        if (rollbackParents && rollbackComment) {
             return makeFailure(STATUS_APPLY_ROLLBACK);
         }
 
@@ -1954,7 +2027,7 @@ function restoreLayerParentFromRecord(layer, record, comp, parentMap) {
     return true;
 }
 
-function removeNestedRecordFromOuterMarker(outerGroup, outerValidation, nestedGroupId) {
+function removeNestedRecordFromOuterState(outerGroup, outerValidation, nestedGroupId) {
     var records = [];
     var index;
     var record;
@@ -1969,12 +2042,11 @@ function removeNestedRecordFromOuterMarker(outerGroup, outerValidation, nestedGr
         }
     }
 
-    setMarkerValueAtKey(getMarkerProperty(outerGroup), outerValidation.candidate.index,
-        GroupControlCore.encodeGroupState({
-            version: 1,
-            groupId: getLayerId(outerGroup),
-            records: records
-        }));
+    writeGroupStateToComment(outerGroup, {
+        version: 1,
+        groupId: getLayerId(outerGroup),
+        records: records
+    });
 }
 
 function removeGroupOwnedEffectsFromComp(group, comp) {
@@ -1988,7 +2060,7 @@ function removeGroupOwnedEffectsFromComp(group, comp) {
 }
 
 function ungroupCore(group, comp) {
-    var markerValidation;
+    var groupStateValidation;
     var state;
     var directChildren = [];
     var index;
@@ -1996,14 +2068,12 @@ function ungroupCore(group, comp) {
     var record;
     var outerGroup;
     var outerValidation = null;
-    var targetMarkerSnapshot;
-    var outerMarkerSnapshot = null;
+    var outerCommentSnapshot = null;
     var backups = [];
     var parentMap;
-    var marker;
     var groupRemoved = false;
     var restoreParentsOk;
-    var restoreMarkersOk;
+    var restoreStateOk;
 
     if (comp === null || typeof comp === "undefined") {
         return makeFailure(STATUS_NO_COMP);
@@ -2013,12 +2083,12 @@ function ungroupCore(group, comp) {
         return makeFailure(STATUS_NO_GROUP);
     }
 
-    markerValidation = validateGroupMarker(group, comp);
-    if (!markerValidation.valid) {
-        return makeFailure(markerValidation.status);
+    groupStateValidation = validateGroupState(group, comp);
+    if (!groupStateValidation.valid) {
+        return makeFailure(groupStateValidation.status);
     }
 
-    state = markerValidation.state;
+    state = groupStateValidation.state;
     for (index = 1; index <= comp.numLayers; index += 1) {
         layer = comp.layer(index);
         if (getParentId(layer) === getLayerId(group)) {
@@ -2035,7 +2105,7 @@ function ungroupCore(group, comp) {
     outerGroup = group.parent;
     if (outerGroup !== null && typeof outerGroup !== "undefined" &&
             isGroupLayer(outerGroup)) {
-        outerValidation = validateGroupMarker(outerGroup, comp);
+        outerValidation = validateGroupState(outerGroup, comp);
         if (!outerValidation.valid || outerValidation.state === null ||
                 !hasRecordForLayer(outerValidation.state, getLayerId(group))) {
             return makeFailure(STATUS_NESTED_MARKER);
@@ -2057,22 +2127,8 @@ function ungroupCore(group, comp) {
         }
     }
 
-    targetMarkerSnapshot = markerValidation.candidate === null ? {
-        exists: false
-    } : {
-        exists: true,
-        index: markerValidation.candidate.index,
-        time: markerValidation.candidate.time,
-        comment: markerValidation.candidate.comment
-    };
-
     if (outerValidation !== null) {
-        outerMarkerSnapshot = {
-            exists: true,
-            index: outerValidation.candidate.index,
-            time: outerValidation.candidate.time,
-            comment: outerValidation.candidate.comment
-        };
+        outerCommentSnapshot = String(outerGroup.comment || "");
     }
 
     for (index = 0; state !== null && index < state.records.length; index += 1) {
@@ -2096,18 +2152,16 @@ function ungroupCore(group, comp) {
             }
         }
 
-        marker = getMarkerProperty(group);
-        if (markerValidation.candidate !== null) {
-            marker.removeKey(markerValidation.candidate.index);
-        }
-
         if (outerValidation !== null) {
-            removeNestedRecordFromOuterMarker(outerGroup, outerValidation, getLayerId(group));
+            removeNestedRecordFromOuterState(outerGroup, outerValidation, getLayerId(group));
         }
 
         removeGroupOwnedEffectsFromComp(group, comp);
         group.remove();
         groupRemoved = true;
+        if (outerValidation !== null) {
+            removeLegacyGroupMarkers(outerGroup);
+        }
         return {
             ok: true,
             status: STATUS_UNGROUP_COMPLETE,
@@ -2116,16 +2170,16 @@ function ungroupCore(group, comp) {
         };
     } catch (error) {
         restoreParentsOk = groupRemoved ? false : restoreParentBackups(backups);
-        restoreMarkersOk = true;
+        restoreStateOk = true;
 
         if (!groupRemoved) {
-            restoreMarkersOk = restoreMarkerSnapshot(group, targetMarkerSnapshot, null) && restoreMarkersOk;
             if (outerValidation !== null) {
-                restoreMarkersOk = restoreMarkerSnapshot(outerGroup, outerMarkerSnapshot, null) && restoreMarkersOk;
+                restoreStateOk = restoreGroupCommentSnapshot(outerGroup,
+                    outerCommentSnapshot) && restoreStateOk;
             }
         }
 
-        if (restoreParentsOk && restoreMarkersOk) {
+        if (restoreParentsOk && restoreStateOk) {
             return makeFailure(STATUS_UNGROUP_ROLLBACK);
         }
 
@@ -2157,9 +2211,9 @@ function ungroup(group, comp) {
     return result;
 }
 
-function changeLayerCount(delta) {
+function changeLayerCount(value) {
     var comp = getActiveComp();
-    var result = beginUndoAction(delta > 0 ? "Undo Change Group Count +" : "Undo Change Group Count -", function () {
+    var result = beginUndoAction("Undo Change Group Count", function () {
         var selection;
         var group;
         var nextValue;
@@ -2176,8 +2230,7 @@ function changeLayerCount(delta) {
         }
 
         group = selection.group;
-        nextValue = GroupControlCore.clampLayerCount(
-            getLayerCount(group, comp) + delta, comp.numLayers);
+        nextValue = GroupControlCore.clampLayerCount(value, comp.numLayers);
         setLayerCount(group, comp, nextValue);
         rememberGroupLayerCount(group, comp, nextValue);
         result = applyGroupCore(group, comp);
@@ -2200,8 +2253,10 @@ function refreshPanel() {
     if (comp === null) {
         groupControlUI.selectedGroupText.text = "None";
         groupControlUI.countText.text = "0";
-        groupControlUI.minusButton.enabled = false;
-        groupControlUI.plusButton.enabled = false;
+        groupControlUI.countSlider.minvalue = 0;
+        groupControlUI.countSlider.maxvalue = 1;
+        groupControlUI.countSlider.value = 0;
+        groupControlUI.countSlider.enabled = false;
         groupControlUI.applyButton.enabled = false;
         groupControlUI.ungroupButton.enabled = false;
         return;
@@ -2211,8 +2266,10 @@ function refreshPanel() {
     if (selection.error !== null) {
         groupControlUI.selectedGroupText.text = "None";
         groupControlUI.countText.text = "0";
-        groupControlUI.minusButton.enabled = false;
-        groupControlUI.plusButton.enabled = false;
+        groupControlUI.countSlider.minvalue = 0;
+        groupControlUI.countSlider.maxvalue = Math.max(1, comp.numLayers);
+        groupControlUI.countSlider.value = 0;
+        groupControlUI.countSlider.enabled = false;
         groupControlUI.applyButton.enabled = false;
         groupControlUI.ungroupButton.enabled = false;
         return;
@@ -2226,8 +2283,10 @@ function refreshPanel() {
 
     groupControlUI.selectedGroupText.text = String(selection.group.name);
     groupControlUI.countText.text = String(count);
-    groupControlUI.minusButton.enabled = count > 0;
-    groupControlUI.plusButton.enabled = count < comp.numLayers;
+    groupControlUI.countSlider.minvalue = 0;
+    groupControlUI.countSlider.maxvalue = Math.max(1, comp.numLayers);
+    groupControlUI.countSlider.value = count;
+    groupControlUI.countSlider.enabled = comp.numLayers > 0;
     groupControlUI.applyButton.enabled = true;
     groupControlUI.ungroupButton.enabled = true;
 }
@@ -2239,9 +2298,8 @@ function buildUI(thisObj) {
     var selectedGroupText;
     var layersLabel;
     var layersRow;
-    var minusButton;
+    var countSlider;
     var countText;
-    var plusButton;
     var statusLabel;
     var statusText;
     var createButton;
@@ -2266,11 +2324,13 @@ function buildUI(thisObj) {
     layersLabel = panel.add("statictext", undefined, "Layers");
     layersRow = panel.add("group");
     layersRow.orientation = "row";
-    minusButton = layersRow.add("button", undefined, "-");
+    countSlider = layersRow.add("slider", undefined, 0, 0, 1);
+    countSlider.alignment = ["fill", "center"];
+    countSlider.preferredSize = [140, 20];
+    countSlider.stepdelta = 1;
     countText = layersRow.add("statictext", undefined, "0");
     countText.characters = 4;
     countText.justify = "center";
-    plusButton = layersRow.add("button", undefined, "+");
     statusLabel = panel.add("statictext", undefined, "Status Text");
     statusText = panel.add("statictext", undefined, "");
     statusText.alignment = ["fill", "top"];
@@ -2281,9 +2341,8 @@ function buildUI(thisObj) {
         root: panel,
         selectedGroupText: selectedGroupText,
         countText: countText,
+        countSlider: countSlider,
         statusText: statusText,
-        minusButton: minusButton,
-        plusButton: plusButton,
         applyButton: applyButton,
         ungroupButton: ungroupButton,
         createButton: createButton
@@ -2294,13 +2353,12 @@ function buildUI(thisObj) {
         refreshPanel();
     };
 
-    minusButton.onClick = function () {
-        changeLayerCount(-1);
-        refreshPanel();
+    countSlider.onChanging = function () {
+        countText.text = String(Math.round(Number(countSlider.value)));
     };
 
-    plusButton.onClick = function () {
-        changeLayerCount(1);
+    countSlider.onChange = function () {
+        changeLayerCount(countSlider.value);
         refreshPanel();
     };
 

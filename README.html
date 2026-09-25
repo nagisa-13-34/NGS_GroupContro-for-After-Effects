@@ -1243,7 +1243,7 @@
       <div class="validation-mark" aria-hidden="true">✓</div>
       <div>
         <strong>Node回帰テスト 64 / 64 成功</strong>
-        <p>Core・Parent・Marker・Effect同期・Panel監視の模擬ホスト検証を通過しています。</p>
+        <p>Core・Parent・Group情報・Effect同期・Panel監視の模擬ホスト検証を通過しています。</p>
       </div>
       <span class="validation-note">2026-09-15 / local check</span>
     </div>
@@ -1274,7 +1274,7 @@
             <article class="feature-row">
               <div class="feature-icon" aria-hidden="true">G</div>
               <h3>タイムライン基準のGroup</h3>
-              <p>Group Nullより下方向にあるレイヤーを、<code>Layer Count</code>で指定した数だけ候補にします。Group Null自身は数えません。Layer Countは0からComp全体のLayer数まで動かせます。</p>
+            <p>Group Nullより下方向にあるレイヤーを、ネイティブEffectの<code>Layer Count</code>で指定した数だけ候補にします。Panelのスライダーからも変更できます。Group Null自身は数えません。</p>
             </article>
             <article class="feature-row">
               <div class="feature-icon" aria-hidden="true">↳</div>
@@ -1289,7 +1289,7 @@
             <article class="feature-row">
               <div class="feature-icon" aria-hidden="true">↶</div>
               <h3>Apply / UngroupをUndo可能に</h3>
-              <p>Apply前のParentとGroup Markerを退避し、予期せぬ失敗時は復元を試みます。Ungroupでは記録したParentを戻し、Group Controlが管理したコピーだけを掃除します。</p>
+              <p>Apply前のParentとコメント欄のGroup情報を退避し、予期せぬ失敗時は復元を試みます。Ungroupでは記録したParentを戻し、Group Controlが管理したコピーだけを掃除します。</p>
             </article>
           </div>
         </section>
@@ -1376,7 +1376,7 @@
             <div class="sequence-step">
               <span class="sequence-number">02 / Shape</span>
               <h3>範囲を決める</h3>
-              <p>Group Nullを選択し、<code>−</code> / <code>＋</code>でLayer Countを調整します。Effect Controlsから数値を直接変えた場合も、Panel起動中なら変更から約0.4〜0.6秒後に自動Applyされます。対象は現在のタイムライン位置から決まります。</p>
+              <p>Group Nullを選択し、PanelのスライダーかEffect Controlsの<code>Layer Count</code>で範囲を調整します。Effect Controlsから変えた場合も、Panel起動中なら値が落ち着いてから自動Applyされます。Parent復元用の記録はGroup Nullのコメント欄に保存し、タイムラインMarkerは追加しません。</p>
             </div>
             <div class="sequence-step">
               <span class="sequence-number">03 / Drive</span>
@@ -1388,7 +1388,7 @@
           <div class="note">
             <div>
               <strong>Ungroupするとき</strong>
-              <p>Group Nullを選択して<code>Ungroup</code>。記録されたParentを戻し、管理用のMarkerとEffectコピーを削除してGroup Nullを取り除きます。直接子Layerの記録が足りない場合は、安全のため削除を中止します。</p>
+              <p>Group Nullを選択して<code>Ungroup</code>。記録されたParentを戻し、Effectコピーを削除してGroup Nullを取り除きます。コメント欄の既存文章は保持され、直接子Layerの記録が足りない場合は安全のため削除を中止します。</p>
             </div>
           </div>
         </section>
@@ -1458,7 +1458,7 @@
               <tr>
                 <td>Node回帰テスト</td>
                 <td class="status-pass mono">64 / 64 pass</td>
-                <td>Core、Marker、Parent、安全なApply / Ungroup、Effect同期、分割監視。</td>
+                <td>Core、Group情報、Parent、安全なApply / Ungroup、Effect同期、分割監視。</td>
               </tr>
               <tr>
                 <td>Windows x64 Release</td>
@@ -1508,7 +1508,7 @@
           <pre class="package-tree">NGS_GroupContro_for_AE/
 ├─ <span class="highlight">panel/</span>
 │  ├─ GroupControl.jsx                 ScriptUI Panel / AE adapter
-│  ├─ GroupControlCore.jsxinc           Marker・範囲・Parent判定の純粋ロジック
+│  ├─ GroupControlCore.jsxinc           Group情報・範囲・Parent判定の純粋ロジック
 │  └─ GroupControlEffectSync.jsxinc    通常Effectの同期・分割監視
 ├─ <span class="highlight">plugin/</span>
 │  ├─ GroupControl/                    C++ Effect本体とSDK共通定義
@@ -1523,8 +1523,8 @@
 └─ <span class="highlight">docs/</span>                              配布・検証・設計資料</pre>
 
           <ul class="source-map">
-            <li><div><a href="panel/GroupControl.jsx">panel/GroupControl.jsx</a><span>Panel UI、Undo、Group Marker、Parent操作</span></div></li>
-            <li><div><a href="panel/GroupControlCore.jsxinc">panel/GroupControlCore.jsxinc</a><span>ES3互換の純粋ロジックとMarker形式</span></div></li>
+            <li><div><a href="panel/GroupControl.jsx">panel/GroupControl.jsx</a><span>Panel UI、Undo、コメント内Group情報、Parent操作</span></div></li>
+            <li><div><a href="panel/GroupControlCore.jsxinc">panel/GroupControlCore.jsxinc</a><span>ES3互換の純粋ロジックとGroup情報形式</span></div></li>
             <li><div><a href="panel/GroupControlEffectSync.jsxinc">panel/GroupControlEffectSync.jsxinc</a><span>通常Effectのコピー、Expression、監視</span></div></li>
             <li><div><a href="plugin/GroupControl/GroupControl.cpp">plugin/GroupControl/GroupControl.cpp</a><span>パススルーのネイティブEffect</span></div></li>
             <li><div><a href="tests/group_control_panel_logic.test.js">tests/group_control_panel_logic.test.js</a><span>Apply / Ungroup / watcherの検証</span></div></li>
