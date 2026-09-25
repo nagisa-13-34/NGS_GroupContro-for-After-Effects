@@ -209,23 +209,23 @@ var GroupControlCore = (function () {
         var key;
 
         if (record === null || typeof record === "undefined") {
-            throwMarkerError(markerErrorCodes.syntax, "Group情報の記録がありません。");
+            throwMarkerError(markerErrorCodes.syntax, "Group Marker record is missing.");
         }
 
         layerId = parseMarkerInteger(String(record.layerId), false);
         originalParentId = parseMarkerInteger(String(record.originalParentId), true);
 
         if (layerId === null || originalParentId === null) {
-            throwMarkerError(markerErrorCodes.id, "Group情報のLayer IDが不正です。");
+            throwMarkerError(markerErrorCodes.id, "Group Marker record ID is invalid.");
         }
 
         if (layerId === groupId || originalParentId === groupId) {
-            throwMarkerError(markerErrorCodes.selfId, "Group情報にGroup Null自身のIDがあります。");
+            throwMarkerError(markerErrorCodes.selfId, "Group Marker contains the Group Null ID.");
         }
 
         key = "id:" + layerId;
         if (hasOwn(seenLayerIds, key)) {
-            throwMarkerError(markerErrorCodes.duplicateLayerId, "Group情報にLayer IDが重複しています。");
+            throwMarkerError(markerErrorCodes.duplicateLayerId, "Group Marker contains a duplicate Layer ID.");
         }
         seenLayerIds[key] = true;
 
@@ -244,18 +244,18 @@ var GroupControlCore = (function () {
         var record;
 
         if (state === null || typeof state === "undefined" || state.version !== 1) {
-            throwMarkerError(markerErrorCodes.syntax, "Group情報のバージョンが不正です。");
+            throwMarkerError(markerErrorCodes.syntax, "Group Marker version is invalid.");
         }
 
         groupId = parseMarkerInteger(String(state.groupId), false);
         if (groupId === null) {
-            throwMarkerError(markerErrorCodes.id, "Group情報のIDが不正です。");
+            throwMarkerError(markerErrorCodes.id, "Group Marker group ID is invalid.");
         }
 
         records = state.records;
         if (records === null || typeof records === "undefined" ||
                 typeof records.length !== "number") {
-            throwMarkerError(markerErrorCodes.syntax, "Group情報の記録が不正です。");
+            throwMarkerError(markerErrorCodes.syntax, "Group Marker records are invalid.");
         }
 
         lines = [markerHeader, "groupId=" + groupId];
@@ -282,40 +282,40 @@ var GroupControlCore = (function () {
         var record;
 
         if (markerComment === null || typeof markerComment === "undefined") {
-            throwMarkerError(markerErrorCodes.syntax, "Group情報がありません。");
+            throwMarkerError(markerErrorCodes.syntax, "Group Marker comment is missing.");
         }
 
         lines = String(markerComment).split(/\r\n|\n|\r/);
         if (lines.length < 2 || lines[0] !== markerHeader) {
-            throwMarkerError(markerErrorCodes.syntax, "Group情報のヘッダーが不正です。");
+            throwMarkerError(markerErrorCodes.syntax, "Group Marker header is invalid.");
         }
 
         if (lines[1].indexOf("groupId=") !== 0) {
-            throwMarkerError(markerErrorCodes.syntax, "Group情報のID行が不正です。");
+            throwMarkerError(markerErrorCodes.syntax, "Group Marker groupId line is invalid.");
         }
 
         groupIdText = lines[1].substring(8);
         groupId = parseMarkerInteger(groupIdText, false);
         if (groupId === null) {
-            throwMarkerError(markerErrorCodes.id, "Group情報のIDが不正です。");
+            throwMarkerError(markerErrorCodes.id, "Group Marker group ID is invalid.");
         }
 
         for (index = 2; index < lines.length; index += 1) {
             line = lines[index];
             if (line.indexOf("record=") !== 0) {
-                throwMarkerError(markerErrorCodes.syntax, "Group情報の記録行が不正です。");
+                throwMarkerError(markerErrorCodes.syntax, "Group Marker record line is invalid.");
             }
 
             recordText = line.substring(7);
             recordParts = recordText.split(",");
             if (recordParts.length !== 2) {
-                throwMarkerError(markerErrorCodes.syntax, "Group情報の記録形式が不正です。");
+                throwMarkerError(markerErrorCodes.syntax, "Group Marker record syntax is invalid.");
             }
 
             layerId = parseMarkerInteger(recordParts[0], false);
             originalParentId = parseMarkerInteger(recordParts[1], true);
             if (layerId === null || originalParentId === null) {
-                throwMarkerError(markerErrorCodes.id, "Group情報のIDが不正です。");
+                throwMarkerError(markerErrorCodes.id, "Group Marker record ID is invalid.");
             }
 
             record = validateRecord({
