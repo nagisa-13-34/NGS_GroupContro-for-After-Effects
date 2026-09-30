@@ -108,12 +108,17 @@ jobs:
           echo "$architectures" | grep -q x86_64
 
           output_dir="$RUNNER_TEMP/ngs-output"
-          mkdir -p "$output_dir"
-          ditto -c -k --sequesterRsrc --keepParent \
-            "$bundle" "$output_dir/NGS_GroupControl_macos-universal.zip"
+          package_dir="$RUNNER_TEMP/ngs-package"
+          mkdir -p "$output_dir" "$package_dir"
+          ditto "$bundle" "$package_dir/GroupControl.plugin"
+          cp LICENCE "$package_dir/LICENCE"
+          ditto -c -k --sequesterRsrc \
+            "$package_dir" "$output_dir/NGS_GroupControl_macos-universal.zip"
           test -s "$output_dir/NGS_GroupControl_macos-universal.zip"
           unzip -Z1 "$output_dir/NGS_GroupControl_macos-universal.zip" | \
             grep -q '^GroupControl.plugin/Contents/MacOS/GroupControl$'
+          unzip -Z1 "$output_dir/NGS_GroupControl_macos-universal.zip" | \
+            grep -q '^LICENCE$'
           shasum -a 256 "$output_dir/NGS_GroupControl_macos-universal.zip"
 
       - name: Upload the macOS plugin artifact

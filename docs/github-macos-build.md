@@ -25,7 +25,8 @@ Actionsの`Build macOS After Effects plugin`を`Run workflow`から実行する�
 
 ```text
 NGS_GroupControl_macos-universal.zip
-└─ GroupControl.plugin
+├─ GroupControl.plugin
+└─ LICENCE
 ```
 
 この`.plugin`はarm64とx86_64を含むUniversal bundleとして検査される。
