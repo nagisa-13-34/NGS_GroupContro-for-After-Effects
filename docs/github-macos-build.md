@@ -1,7 +1,8 @@
 # GitHub ActionsでmacOS用`.plugin`を作る
 
 macOS用のAfter Effectsプラグインは、Windows上ではXcodeを実行できないため、GitHub ActionsのmacOSランナーでビルドする。
-After Effects SDKはAdobeのライセンス対象なので、公開リポジトリへ置かず、必ずprivateリポジトリのRelease Assetとして扱う。
+このWorkflowは、同じリポジトリのRelease AssetからSDKを取得するため、privateリポジトリでのみ実行できる。公開リポジトリで実行すると、private repository checkで失敗する。
+現在の公開ソースリポジトリではSDKを管理しない。ビルド用にprivateリポジトリを使い、After Effects SDKはAdobeのライセンス対象として、そのprivateリポジトリのRelease Assetにだけ置く。公開リポジトリのReleaseやファイルにSDKを含めない。
 
 ## 初回の準備
 
