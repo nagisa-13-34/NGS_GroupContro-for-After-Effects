@@ -332,7 +332,8 @@ class FakeScheduler {
   }
 }
 
-function loadPanel({ scheduler = null, sharedGlobal = null, appOverride = null } = {}) {
+function loadPanel({ scheduler = null, sharedGlobal = null, appOverride = null,
+  systemOverride = undefined, jsonAvailable = true } = {}) {
   const panel = fs.readFileSync(path.join(rootDir, 'panel', 'GroupControl.jsx'), 'utf8')
     .replace(/#include\s+["']([^"']+)["']/g, (includeLine, includeName) => {
       const includePath = path.join(rootDir, 'panel', includeName);
@@ -351,6 +352,8 @@ function loadPanel({ scheduler = null, sharedGlobal = null, appOverride = null }
     Panel: FakePanel,
     Window: FakeWindow,
     app,
+    system: systemOverride,
+    JSON: jsonAvailable ? JSON : undefined,
   };
   if (sharedGlobal) {
     sandbox.$ = { global: sharedGlobal };
@@ -358,6 +361,96 @@ function loadPanel({ scheduler = null, sharedGlobal = null, appOverride = null }
   vm.runInNewContext(panel, sandbox, { filename: 'GroupControl.jsx' });
   return sandbox;
 }
+
+test('update manifest parsing works in ExtendScript without native JSON', () => {
+  const panel = loadPanel({ jsonAvailable: false });
+  const manifest = panel.parseGroupControlUpdateManifest(String.raw`{
+    "latestVersion":"1.0.10",
+    "downloadUrl":"https:\/\/nagisa-12-34.booth.pm\/items\/12345",
+    "releaseNotes":"Fix \u65e5\u672c\u8a9e"
+  }`);
+
+  assert.equal(manifest.latestVersion, '1.0.10');
+  assert.equal(manifest.downloadUrl, 'https://nagisa-12-34.booth.pm/items/12345');
+  assert.equal(manifest.releaseNotes, 'Fix 日本語');
+  assert.equal(panel.compareGroupControlVersions('1.0.10', '1.0.9'), 1);
+  assert.equal(panel.compareGroupControlVersions('1.0.0', '1.0.0'), 0);
+  assert.equal(panel.compareGroupControlVersions('1.0.beta', '1.0.0'), null);
+  assert.equal(panel.parseGroupControlUpdateManifest('{"latestVersion":"bad"}'), null);
+});
+
+test('a newer Gist version shows a persistent panel notice and opens its page on click', () => {
+  const scheduler = new FakeScheduler();
+  const commands = [];
+  let latestVersion = '1.0.1';
+  const panel = loadPanel({
+    scheduler,
+    systemOverride: {
+      osName: 'Windows',
+      callSystem(command) {
+        commands.push(command);
+        if (command.startsWith('curl ')) {
+          return JSON.stringify({
+            latestVersion,
+            downloadUrl: 'https://nagisa-12-34.booth.pm/items/12345',
+            releaseNotes: 'New controls',
+          });
+        }
+        return '';
+      },
+    },
+  });
+  const ui = panel.buildUI({});
+  const update = panel.groupControlEffectWatcherState.updateCheck;
+
+  assert.equal(panel.groupControlUI.updateRow.visible, false);
+  update.nextCheckAt = 0;
+  panel.GroupControlEffectWatcherRunOnce();
+  assert.equal(panel.groupControlUI.updateRow.visible, true);
+  assert.equal(panel.groupControlUI.updateText.text, '更新があります: v1.0.1');
+  assert.equal(panel.groupControlUI.updateText.helpTip, 'New controls');
+  assert.equal(panel.groupControlUI.updateButton.enabled, true);
+  assert.match(commands[0], /\/raw\/NGS_GroupControl/);
+  assert.doesNotMatch(commands[0], /\/raw\/df938a741c2a2a0328106cbbcf299a64a2dc1de9\//);
+
+  panel.GroupControlEffectWatcherRunOnce();
+  assert.equal(commands.length, 1, 'successful checks wait for the next interval');
+  panel.groupControlUI.updateButton.onClick();
+  assert.equal(commands[1], 'cmd.exe /c start "" "https://nagisa-12-34.booth.pm/items/12345"');
+
+  latestVersion = '1.0.0';
+  update.nextCheckAt = 0;
+  panel.GroupControlEffectWatcherRunOnce();
+  assert.equal(panel.groupControlUI.updateRow.visible, false);
+  ui.onClose();
+});
+
+test('an invalid update URL cannot become a shell command', () => {
+  const commands = [];
+  const panel = loadPanel({
+    systemOverride: {
+      osName: 'Windows',
+      callSystem(command) {
+        commands.push(command);
+        return JSON.stringify({
+          latestVersion: '1.0.2',
+          downloadUrl: 'https://example.com/" & calc',
+          releaseNotes: 'Test',
+        });
+      },
+    },
+  });
+  const ui = panel.buildUI({});
+  panel.groupControlEffectWatcherState.updateCheck.nextCheckAt = 0;
+  panel.GroupControlEffectWatcherRunOnce();
+
+  assert.equal(panel.groupControlUI.updateRow.visible, true);
+  assert.equal(panel.groupControlUI.updateButton.enabled, false);
+  panel.groupControlUI.updateButton.onClick();
+  assert.equal(commands.length, 1);
+  assert.equal(panel.groupControlUI.statusText.text, '更新ページを開けませんでした。');
+  ui.onClose();
+});
 
 function makeGroupFixture({ count = 0, extraLayers = [] } = {}) {
   const group = new FakeLayer(100, '[G] Group', { nullLayer: true });

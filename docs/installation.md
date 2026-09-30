@@ -1,5 +1,11 @@
 # Group Controlの配布
 
+## 更新通知
+
+Panelを開くと約2秒後に[更新情報のGist](https://gist.github.com/nagisa-13-34/0e72cd46bf8d9b1e546d9d016e3326ee)を確認し、開いている間は5分ごとに確認する。Gistの`latestVersion`が`panel/GroupControl.jsx`の`GROUP_CONTROL_PANEL_VERSION`より新しい場合、Panel上部に通知と更新ページを開くボタンを表示する。`releaseNotes`は通知のツールチップに表示する。OSの`curl`を使用し、取得できない場合は5分後に再試行する。
+
+新しい版を配布するときはPanelの版番号とGistの`latestVersion`を合わせ、`downloadUrl`を実際の配布先へ更新する。`downloadUrl`には、引用符やクエリを含まないHTTPS URLを設定する。
+
 ## Panel用JSXを作る
 
 `GroupControl.jsx`をそのままバイナリ化すると、変換ツールによっては`#include`が展開されず、Panelが空になる。

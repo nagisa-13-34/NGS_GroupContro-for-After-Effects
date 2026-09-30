@@ -17,6 +17,12 @@ var GROUP_CONTROL_LAYER_COUNT_DISPLAY_NAME = "Layer Count";
 var GROUP_CONTROL_GROUP_NAME = "[G] Group";
 var GROUP_CONTROL_COMMENT_STATE_BEGIN = "<<<NGS_GROUP_CONTROL_STATE_BEGIN>>>";
 var GROUP_CONTROL_COMMENT_STATE_END = "<<<NGS_GROUP_CONTROL_STATE_END>>>";
+var GROUP_CONTROL_PANEL_VERSION = "1.0.0";
+var GROUP_CONTROL_UPDATE_MANIFEST_URL =
+    "https://gist.githubusercontent.com/nagisa-13-34/0e72cd46bf8d9b1e546d9d016e3326ee/raw/NGS_GroupControl";
+var GROUP_CONTROL_UPDATE_INITIAL_DELAY_MS = 2000;
+var GROUP_CONTROL_UPDATE_CHECK_INTERVAL_MS = 5 * 60 * 1000;
+var GROUP_CONTROL_UPDATE_RETRY_INTERVAL_MS = 5 * 60 * 1000;
 
 var STATUS_NO_COMP = "コンポジションを開いてください。";
 var STATUS_NO_GROUP = "Group Nullを選択してください。";
@@ -73,7 +79,8 @@ if (typeof groupControlEffectWatcherStateGlobal[GROUP_CONTROL_EFFECT_WATCHER_STA
         generation: 0,
         runtimeToken: null,
         app: null,
-        layerCountWatch: null
+        layerCountWatch: null,
+        updateCheck: null
     };
 }
 
@@ -123,6 +130,16 @@ if (Object.prototype.toString.call(
         groupControlEffectWatcherState.layerCountWatch.pending) !== "[object Array]") {
     groupControlEffectWatcherState.layerCountWatch.pending = [];
 }
+if (groupControlEffectWatcherState.updateCheck === null ||
+        typeof groupControlEffectWatcherState.updateCheck !== "object" ||
+        typeof groupControlEffectWatcherState.updateCheck.nextCheckAt !== "number") {
+    groupControlEffectWatcherState.updateCheck = {
+        nextCheckAt: new Date().getTime() + GROUP_CONTROL_UPDATE_INITIAL_DELAY_MS,
+        availableVersion: "",
+        downloadUrl: "",
+        releaseNotes: ""
+    };
+}
 
 function makeFailure(status) {
     return {
@@ -149,6 +166,166 @@ function getErrorText(error) {
 function setStatusText(status) {
     if (groupControlUI !== null && groupControlUI.statusText !== null) {
         groupControlUI.statusText.text = String(status);
+    }
+}
+
+function compareGroupControlVersions(left, right) {
+    var versionPattern = /^([0-9]+)\.([0-9]+)\.([0-9]+)$/;
+    var leftParts = versionPattern.exec(String(left));
+    var rightParts = versionPattern.exec(String(right));
+    var index;
+    var difference;
+
+    if (leftParts === null || rightParts === null) {
+        return null;
+    }
+    for (index = 1; index <= 3; index += 1) {
+        difference = Number(leftParts[index]) - Number(rightParts[index]);
+        if (difference !== 0) {
+            return difference > 0 ? 1 : -1;
+        }
+    }
+    return 0;
+}
+
+function readUpdateManifestString(source, name) {
+    var pattern = new RegExp('"' + name + '"\\s*:\\s*"((?:\\\\.|[^"\\\\])*)"');
+    var match = pattern.exec(source);
+    var escapes = {"\"": "\"", "\\": "\\", "/": "/", b: "\b", f: "\f",
+        n: "\n", r: "\r", t: "\t"};
+
+    if (match === null || /\\(?!u[0-9a-fA-F]{4}|["\\\/bfnrt])/.test(match[1])) {
+        return null;
+    }
+    return match[1].replace(/\\(u[0-9a-fA-F]{4}|["\\\/bfnrt])/g,
+        function (escape, code) {
+            if (code.charAt(0) === "u") {
+                return String.fromCharCode(parseInt(code.substring(1), 16));
+            }
+            return escapes[code];
+        });
+}
+
+function parseGroupControlUpdateManifest(source) {
+    var text = String(source || "").replace(/^\s+|\s+$/g, "");
+    var manifest;
+    var version;
+    var downloadUrl;
+    var releaseNotes;
+
+    if (text.length === 0 || text.length > 16384 ||
+            text.charAt(0) !== "{" || text.charAt(text.length - 1) !== "}") {
+        return null;
+    }
+    if (typeof JSON !== "undefined" && typeof JSON.parse === "function") {
+        try {
+            manifest = JSON.parse(text);
+        } catch (parseError) {
+            return null;
+        }
+        version = manifest && manifest.latestVersion;
+        downloadUrl = manifest && manifest.downloadUrl;
+        releaseNotes = manifest && manifest.releaseNotes;
+    } else {
+        version = readUpdateManifestString(text, "latestVersion");
+        downloadUrl = readUpdateManifestString(text, "downloadUrl");
+        releaseNotes = readUpdateManifestString(text, "releaseNotes");
+    }
+    if (typeof version !== "string" ||
+            compareGroupControlVersions(version, GROUP_CONTROL_PANEL_VERSION) === null) {
+        return null;
+    }
+    return {
+        latestVersion: version,
+        downloadUrl: typeof downloadUrl === "string" ? downloadUrl : "",
+        releaseNotes: typeof releaseNotes === "string" ? releaseNotes : ""
+    };
+}
+
+function isSafeGroupControlUpdateUrl(url) {
+    return /^https:\/\/[A-Za-z0-9.-]+\/[A-Za-z0-9._~\/-]+$/.test(String(url));
+}
+
+function refreshGroupControlUpdateNotice() {
+    var update = groupControlEffectWatcherState.updateCheck;
+    var visible;
+
+    if (groupControlUI === null || groupControlUI.updateRow === null) {
+        return;
+    }
+    visible = update.availableVersion !== "";
+    groupControlUI.updateRow.visible = visible;
+    if (visible) {
+        groupControlUI.updateText.text = "更新があります: v" + update.availableVersion;
+        groupControlUI.updateText.helpTip = update.releaseNotes.substring(0, 500);
+        groupControlUI.updateButton.enabled = isSafeGroupControlUpdateUrl(update.downloadUrl);
+    }
+    if (groupControlUI.root.layout !== null &&
+            typeof groupControlUI.root.layout !== "undefined" &&
+            typeof groupControlUI.root.layout.layout === "function") {
+        groupControlUI.root.layout.layout(true);
+        groupControlUI.root.layout.resize();
+    }
+}
+
+function checkForGroupControlUpdates() {
+    var update = groupControlEffectWatcherState.updateCheck;
+    var nowValue = new Date().getTime();
+    var source;
+    var manifest;
+
+    if (groupControlUI === null || typeof system === "undefined" ||
+            system === null || typeof system.callSystem !== "function" ||
+            nowValue < update.nextCheckAt) {
+        return;
+    }
+    update.nextCheckAt = nowValue + GROUP_CONTROL_UPDATE_RETRY_INTERVAL_MS;
+    try {
+        source = system.callSystem("curl -fsSL --connect-timeout 2 --max-time 3 --url \"" +
+            GROUP_CONTROL_UPDATE_MANIFEST_URL + "\"");
+        manifest = parseGroupControlUpdateManifest(source);
+    } catch (networkError) {
+        return;
+    }
+    if (manifest === null) {
+        return;
+    }
+    update.nextCheckAt = nowValue + GROUP_CONTROL_UPDATE_CHECK_INTERVAL_MS;
+    if (compareGroupControlVersions(manifest.latestVersion,
+            GROUP_CONTROL_PANEL_VERSION) > 0) {
+        update.availableVersion = manifest.latestVersion;
+        update.downloadUrl = manifest.downloadUrl;
+        update.releaseNotes = manifest.releaseNotes;
+    } else {
+        update.availableVersion = "";
+        update.downloadUrl = "";
+        update.releaseNotes = "";
+    }
+    refreshGroupControlUpdateNotice();
+}
+
+function openGroupControlUpdatePage() {
+    var url = groupControlEffectWatcherState.updateCheck.downloadUrl;
+    var osName = "";
+    var command;
+
+    if (!isSafeGroupControlUpdateUrl(url) || typeof system === "undefined" ||
+            system === null || typeof system.callSystem !== "function") {
+        setStatusText("更新ページを開けませんでした。");
+        return;
+    }
+    try {
+        if (typeof $ !== "undefined" && $ !== null) {
+            osName = String($.os || "");
+        }
+        if (osName === "" && system.osName) {
+            osName = String(system.osName);
+        }
+        command = /^Windows/i.test(osName) ?
+            'cmd.exe /c start "" "' + url + '"' : 'open "' + url + '"';
+        system.callSystem(command);
+    } catch (openError) {
+        setStatusText("更新ページを開けませんでした。");
     }
 }
 
@@ -894,6 +1071,7 @@ function runGroupEffectWatcherOnce(owner, reschedule) {
 
     groupControlEffectWatcherState.ticking = true;
     try {
+        checkForGroupControlUpdates();
         comp = getActiveComp();
         project = getGroupEffectWatcherProject();
         if (comp === null || project === null) {
@@ -2294,6 +2472,9 @@ function refreshPanel() {
 function buildUI(thisObj) {
     var panel;
     var title;
+    var updateRow;
+    var updateText;
+    var updateButton;
     var selectedLabel;
     var selectedGroupText;
     var layersLabel;
@@ -2316,8 +2497,15 @@ function buildUI(thisObj) {
     panel.orientation = "column";
     panel.alignChildren = ["fill", "top"];
 
-    title = panel.add("statictext", undefined, "GROUP CONTROL");
+    title = panel.add("statictext", undefined,
+        "GROUP CONTROL  v" + GROUP_CONTROL_PANEL_VERSION);
     title.alignment = ["fill", "top"];
+    updateRow = panel.add("group");
+    updateRow.orientation = "column";
+    updateRow.alignChildren = ["fill", "top"];
+    updateRow.visible = false;
+    updateText = updateRow.add("statictext", undefined, "");
+    updateButton = updateRow.add("button", undefined, "更新ページを開く");
     createButton = panel.add("button", undefined, "Create Group");
     selectedLabel = panel.add("statictext", undefined, "Selected Group");
     selectedGroupText = panel.add("statictext", undefined, "None");
@@ -2339,6 +2527,9 @@ function buildUI(thisObj) {
 
     groupControlUI = {
         root: panel,
+        updateRow: updateRow,
+        updateText: updateText,
+        updateButton: updateButton,
         selectedGroupText: selectedGroupText,
         countText: countText,
         countSlider: countSlider,
@@ -2347,6 +2538,9 @@ function buildUI(thisObj) {
         ungroupButton: ungroupButton,
         createButton: createButton
     };
+
+    updateButton.onClick = openGroupControlUpdatePage;
+    refreshGroupControlUpdateNotice();
 
     createButton.onClick = function () {
         createGroup();
