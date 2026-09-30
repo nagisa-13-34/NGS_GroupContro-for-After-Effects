@@ -21,7 +21,7 @@ panel/GroupControlEffectSync.jsxinc
 
 ## Windowsの配布物
 
-Panel、ネイティブEffect、`LICENCE`をまとめて配布する。
+権利者の公式配布物、またはライセンス条件を満たす改変版は、Panel、ネイティブEffect、`LICENCE`をまとめる。
 
 ```text
 NGS_GroupControl_Windows/
@@ -31,7 +31,7 @@ NGS_GroupControl_Windows/
 ```
 
 `GroupControl.aex`は`build/win/Release/GroupControl.aex`から取得する。
-`LICENCE`はリポジトリのルートからコピーする。無償の配布・譲渡・再配布でも、ライセンス全文の同梱と同じ条件の継承が必要になる。
+`LICENCE`はリポジトリのルートからコピーする。第三者が配布・譲渡・再配布できるのは、自分が受け取った版のプログラムコードを改変した版だけである。その場合も無償とし、ライセンス全文の同梱と同じ条件の継承が必要になる。
 
 利用者側では、After Effectsを終了してから次へ配置する。
 
@@ -45,7 +45,7 @@ After Effectsを再起動すると、`Window`メニューからPanelを開ける
 
 ## 開発用のJSXを渡す場合
 
-JSXBINに変換しない場合は、次の4ファイルを同じフォルダへ置く。
+JSXBINに変換しない場合は、次の4ファイルを同じフォルダへ置く。第三者が渡す場合は、上記のコード改変と配布条件を守る。
 
 ```text
 GroupControl.jsx

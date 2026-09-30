@@ -13,7 +13,7 @@ After Effectsのタイムライン上で、指定した数のレイヤーをGrou
 
 ## 導入と使い方
 
-動作にはPanelとネイティブEffectが必要です。第三者へ配布するときは`LICENCE`も同梱してください。After Effectsを終了してからPanelとEffectを配置し、再起動します。Windows版では、`NGS_GroupControl.jsxbin`を`Support Files\Scripts\ScriptUI Panels\`へ、`GroupControl.aex`を`Support Files\Plug-ins\NGS Group Control\`へ配置します。macOS版の導入手順とPanelが空になる場合の確認事項は[HTML版READMEの導入](README.html#install)を参照してください。
+動作にはPanelとネイティブEffectが必要です。After Effectsを終了してからPanelとEffectを配置し、再起動します。Windows版では、`NGS_GroupControl.jsxbin`を`Support Files\Scripts\ScriptUI Panels\`へ、`GroupControl.aex`を`Support Files\Plug-ins\NGS Group Control\`へ配置します。macOS版の導入手順とPanelが空になる場合の確認事項は[HTML版READMEの導入](README.html#install)を参照してください。
 
 1. 対象にしたいレイヤーを選び、Panelの`Create Group`を押す。
 2. Group Nullの`Layer Count`で対象数を調整し、必要に応じて`Apply`する。
@@ -44,8 +44,9 @@ node --test (Get-ChildItem -LiteralPath tests -Filter '*.test.js' -File | Select
 | 行為 | 条件 |
 | --- | --- |
 | 個人利用・商用利用・改変 | 許可 |
-| 無償での配布・譲渡・再配布 | `LICENCE`を同梱し、同じ条件を引き継ぐ場合に許可 |
+| 自分がコードを改変した版の無償での配布・譲渡・再配布 | `LICENCE`を同梱し、同じ条件を引き継ぐ場合に許可 |
+| 受け取ったコードをそのまま配布・譲渡・再配布 | 無償でも禁止 |
 | 販売・転売・有料での配布や譲渡 | 禁止 |
 | `LICENCE`を同梱しない配布や譲渡 | 無償でも禁止 |
 
-商用利用には、本ソフトウェアを使った制作物や受託制作の成果物の販売を含みます。本ソフトウェアそのものを有料で渡すことはできません。正確な条件は[LICENCE](LICENCE)を確認してください。
+商用利用には、本ソフトウェアを使った制作物や受託制作の成果物の販売を含みます。本ソフトウェアそのものを有料で渡すことはできません。ファイル名や文書だけの変更、元のコードの再ビルドは、配布を許す「改変」には当たりません。正確な条件は[LICENCE](LICENCE)を確認してください。

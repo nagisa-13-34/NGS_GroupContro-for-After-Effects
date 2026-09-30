@@ -30,6 +30,7 @@ NGS_GroupControl_macos-universal.zip
 ```
 
 この`.plugin`はarm64とx86_64を含むUniversal bundleとして検査される。
+第三者がこのZIPや`.plugin`をコード無改変のまま配布・譲渡・再配布することは、`LICENCE`の条件で禁止される。
 After Effectsを終了してから、`GroupControl.plugin`を次へ配置する。
 
 ```text
