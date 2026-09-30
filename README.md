@@ -6,7 +6,7 @@
 
 After Effects 2024以降のWindows / macOSで使えるScriptUI PanelとネイティブEffectです。無償で公開しており、AviUtlの「グループ制御」に近い操作感を目指しています。
 
-[配布ファイル一覧](Release/) · [図解付きの詳細](README.html) · [利用許諾条件](LICENCE)
+[配布ファイル一覧](Release/) · [利用許諾条件](LICENCE)
 
 ## 利用者向け
 
@@ -41,7 +41,7 @@ PanelとネイティブEffectの両方が必要です。After Effectsを終了�
 3. Group NullのTransformやEffectを使って、対象レイヤーをまとめて操作します。
 4. グループを解除するときは、Group Nullを選んで`Ungroup`を押します。
 
-Group Nullに追加したEffectを自動同期するには、Panelを開いた状態にしてください。操作の図解や導入の補足は[README.html](README.html)にあります。
+Group Nullに追加したEffectを自動同期するには、Panelを開いた状態にしてください。
 
 ### 制限事項
 
